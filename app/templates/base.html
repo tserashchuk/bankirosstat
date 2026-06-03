@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}Project Hub & AI Reporter{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/app.css?v=6">
+</head>
+<body class="font-sans bg-surface text-ink min-h-screen antialiased">
+  <header class="px-6 lg:px-10 pt-6">
+    <div class="max-w-[1400px] mx-auto flex items-center justify-between gap-6 bg-white rounded-full shadow-soft pl-3 pr-3 py-2 relative overflow-visible">
+      <a href="/" class="flex items-center gap-2 shrink-0">
+        <span class="flex items-center justify-center w-10 h-10 rounded-full bg-lime-300 text-ink font-extrabold text-lg">PH</span>
+        <span class="hidden sm:inline text-lg font-bold tracking-tight">Project Hub</span>
+      </a>
+
+      <nav class="flex items-center gap-1 bg-transparent">
+        {% set nav_items = [
+          ('/', 'dashboard', 'Дашборд'),
+          ('/projects', 'projects', 'Проекты'),
+          ('/employees', 'employees', 'Сотрудники'),
+          ('/history', 'history', 'История'),
+          ('/sync-tasks', 'sync_tasks', 'Задачи синка'),
+        ] %}
+        {% for href, key, label in nav_items %}
+        <a href="{{ href }}"
+           class="px-4 sm:px-5 py-2 rounded-full text-sm font-medium transition
+                  {% if active == key %}bg-ink text-white{% else %}text-slate-600 hover:bg-slate-100{% endif %}">
+          {{ label }}
+        </a>
+        {% endfor %}
+      </nav>
+
+      <div class="flex items-center gap-2 shrink-0 relative">
+        <div class="relative">
+          <button type="button" id="notifications-bell" class="notifications-bell w-10 h-10 rounded-full bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-600 relative" aria-label="Уведомления" aria-expanded="false" aria-haspopup="true">
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M15 17h5l-1.4-1.4A2 2 0 0118 14.2V11a6 6 0 10-12 0v3.2a2 2 0 01-.6 1.4L4 17h5m6 0a3 3 0 11-6 0"/>
+            </svg>
+            <span id="notifications-badge" class="notifications-badge hidden">0</span>
+          </button>
+          <div id="notifications-dropdown" class="notifications-dropdown hidden" role="menu">
+            <div class="notifications-dropdown__head">
+              <span class="text-sm font-semibold text-ink">Уведомления</span>
+            </div>
+            <p id="notifications-empty" class="notifications-empty text-sm text-slate-500 px-4 py-6 text-center">Нет активных задач</p>
+            <ul id="notifications-list" class="notifications-list divide-y divide-slate-100"></ul>
+          </div>
+        </div>
+        <div class="w-10 h-10 rounded-full bg-gradient-to-br from-lime-300 to-emerald-400 flex items-center justify-center text-ink font-bold text-sm">PM</div>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-[1400px] mx-auto px-6 lg:px-10 py-8">
+    {% block content %}{% endblock %}
+  </main>
+
+  <!-- Глобальный просмотр готового отчёта из фоновой задачи -->
+  <div id="report-job-modal" class="hidden fixed inset-0 z-[60] overflow-y-auto">
+    <div class="flex min-h-screen items-center justify-center p-4 sm:p-6">
+      <div class="fixed inset-0 modal-backdrop" id="report-job-backdrop"></div>
+      <div class="relative card w-full max-w-4xl max-h-[92vh] flex flex-col shadow-soft">
+        <div class="flex justify-between items-start gap-4 px-6 sm:px-7 py-5 border-b border-slate-100 shrink-0">
+          <div class="min-w-0">
+            <h2 class="text-lg font-bold truncate" id="report-job-title">Отчёт</h2>
+            <p class="text-sm text-slate-500" id="report-job-subtitle"></p>
+          </div>
+          <button type="button" id="report-job-close" class="w-9 h-9 rounded-full hover:bg-slate-100 flex items-center justify-center text-slate-400 text-2xl leading-none shrink-0" aria-label="Закрыть">&times;</button>
+        </div>
+        <div class="flex items-center justify-between px-6 sm:px-7 py-3 border-b border-slate-100 shrink-0 flex-wrap gap-2">
+          <div class="tab-group">
+            <button type="button" data-tab="preview" class="tab-btn report-job-tab active">Preview</button>
+            <button type="button" data-tab="edit" class="tab-btn report-job-tab">Редактор</button>
+          </div>
+          <div class="flex items-center gap-2">
+            <span id="report-job-projects" class="hidden chip bg-slate-100 text-slate-600"></span>
+            <span id="report-job-rag" class="hidden chip"></span>
+          </div>
+        </div>
+        <div class="flex-1 min-h-0 overflow-hidden flex flex-col">
+          <div id="report-job-preview" class="flex-1 overflow-auto px-6 sm:px-7 py-6 markdown-body min-h-[280px]"></div>
+          <textarea id="report-job-edit" class="hidden flex-1 px-6 sm:px-7 py-6 font-mono text-sm border-0 resize-none bg-transparent min-h-[280px]" placeholder="Markdown отчёта..."></textarea>
+        </div>
+        <p id="report-job-error" class="hidden text-sm text-red-600 bg-red-50 mx-6 sm:mx-7 mb-2 rounded-xl px-4 py-3"></p>
+        <div class="border-t border-slate-100 px-6 sm:px-7 py-4 flex flex-wrap gap-2 justify-end shrink-0">
+          <button type="button" id="report-job-copy" class="btn-ghost" disabled>Копировать</button>
+          <button type="button" id="report-job-save" class="btn-primary" disabled>В историю</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script defer src="https://cdn.tailwindcss.com"></script>
+  <script defer>
+    window.addEventListener("DOMContentLoaded", () => {
+      if (typeof tailwind !== "undefined") {
+        tailwind.config = {
+          theme: {
+            extend: {
+              fontFamily: { sans: ["Inter", "system-ui", "sans-serif"] },
+              colors: {
+                ink: "#0d0d0f",
+                lime: {
+                  50: "#f7fee7",
+                  100: "#ecfccb",
+                  200: "#d9f99d",
+                  300: "#bef264",
+                  400: "#a3e635",
+                  500: "#84cc16",
+                },
+                surface: "#f2f3f5",
+              },
+              boxShadow: {
+                soft: "0 6px 24px -6px rgba(15, 23, 42, 0.08), 0 2px 8px -2px rgba(15, 23, 42, 0.04)",
+              },
+              borderRadius: { "4xl": "2rem" },
+            },
+          },
+        };
+      }
+    });
+  </script>
+  <script defer src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script defer src="/static/js/report_panel.js?v=1"></script>
+  <script defer src="/static/js/jobs_widget.js?v=3"></script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

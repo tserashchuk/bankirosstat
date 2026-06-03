@@ -1,0 +1,43 @@
+.git
+.gitignore
+.github
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+.venv
+venv
+env
+*.egg-info
+.pytest_cache
+.mypy_cache
+.ruff_cache
+
+# IDE
+.vscode
+.idea
+.cursor
+
+# Local data — монтируется как volume, не нужна внутри образа
+data
+*.db
+*.sqlite
+*.sqlite3
+
+# Локальные секреты — пробрасываются через env_file в compose
+.env
+.env.local
+
+# Логи и временные файлы
+*.log
+.DS_Store
+tmp
+.tmp
+
+# Документация и сборочные артефакты, которые не нужны рантайму
+node_modules
+dist
+build

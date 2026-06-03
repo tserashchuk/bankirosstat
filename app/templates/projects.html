@@ -1,0 +1,324 @@
+{% extends "base.html" %}
+{% block title %}Проекты — Project Hub{% endblock %}
+
+{% block content %}
+<div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
+  <div>
+    <p class="page-eyebrow">Project Hub</p>
+    <h1 class="page-title">Проекты и источники</h1>
+  </div>
+  <div class="stat-pill">
+    Всего проектов: <strong>{{ projects|length }}</strong>
+  </div>
+</div>
+
+<!-- Новый проект -->
+<div class="card p-6 sm:p-8 mb-6">
+  <h2 class="text-base font-bold text-ink mb-5">Новый проект</h2>
+  <form id="form-new-project" class="space-y-4 max-w-xl">
+    <div>
+      <label class="field-label">Название</label>
+      <input name="name" class="fc" required placeholder="Например: Bankiros Core">
+    </div>
+    <div>
+      <label class="field-label">Описание</label>
+      <textarea name="description" class="fc" rows="3" placeholder="Описание для сегментации: ключевые слова, продукты, эпики, домены (через запятую или с новой строки). Письма и встречи распределяются по этому контексту."></textarea>
+    </div>
+    <div class="pt-1">
+      <button type="submit" class="btn-accent">+ Создать проект</button>
+    </div>
+  </form>
+</div>
+
+<!-- Список проектов -->
+<div class="space-y-5">
+{% for project in projects %}
+<article class="card project-card">
+  <div class="project-card-header">
+    <div class="flex items-center gap-3 min-w-0">
+      <span class="avatar avatar-md bg-lime-300 text-ink">{{ project.name[0]|upper }}</span>
+      <div class="min-w-0">
+        <h3 class="font-bold text-lg text-ink truncate">{{ project.name }}</h3>
+        {% if project.description %}
+        <p class="text-sm text-slate-500 truncate">{{ project.description }}</p>
+        {% endif %}
+      </div>
+    </div>
+    <div class="flex items-center gap-2 shrink-0">
+      <span class="chip bg-slate-100 text-slate-600">{{ project.sources|length }} источн.</span>
+      <span class="chip bg-slate-100 text-slate-600">{{ project.employees|length }} сотрудн.</span>
+      <button type="button" class="btn-ghost btn-sm btn-preview-roadmap" data-project-id="{{ project.id }}">Таблица roadmap</button>
+      <button type="button" class="btn-ghost btn-sm btn-edit-project" data-project-id="{{ project.id }}">Изменить</button>
+    </div>
+  </div>
+
+  <div class="project-card-body space-y-6">
+    <div class="grid md:grid-cols-2 gap-5">
+      <!-- Сотрудники -->
+      <div class="panel">
+        <p class="section-title">Сотрудники проекта</p>
+        {% if project.employees %}
+        <ul class="space-y-2 mb-4">
+          {% for emp in project.employees %}
+          <li class="list-item">
+            <span class="flex items-center gap-2 min-w-0">
+              <span class="avatar avatar-sm bg-lime-200 text-ink">{{ emp.full_name[0]|upper }}</span>
+              <span class="truncate">
+                <span class="font-medium">{{ emp.full_name }}</span>
+                <span class="text-slate-500 text-xs block">{{ emp.yandex_email }}</span>
+              </span>
+            </span>
+            <button type="button" class="btn-link btn-link-danger btn-unassign-employee shrink-0"
+              data-project-id="{{ project.id }}" data-employee-id="{{ emp.id }}">Открепить</button>
+          </li>
+          {% endfor %}
+        </ul>
+        {% else %}
+        <p class="empty-hint mb-4">Нет закреплённых сотрудников</p>
+        {% endif %}
+
+        {% if all_employees %}
+        <form class="form-assign-employee flex flex-col sm:flex-row gap-2" data-project-id="{{ project.id }}">
+          <select name="employee_id" required class="fc flex-1">
+            <option value="" disabled selected>Выберите сотрудника</option>
+            {% for emp in all_employees %}
+            <option value="{{ emp.id }}">{{ emp.full_name }} — {{ emp.yandex_email }}</option>
+            {% endfor %}
+          </select>
+          <button type="submit" class="btn-primary btn-sm shrink-0">Закрепить</button>
+        </form>
+        {% else %}
+        <p class="text-sm text-slate-500">
+          <a href="/employees" class="font-semibold text-ink underline underline-offset-2">Создайте сотрудников</a>
+          в разделе «Сотрудники».
+        </p>
+        {% endif %}
+      </div>
+
+      <!-- Источники -->
+      <div class="panel">
+        <p class="section-title">Источники данных</p>
+        {% if project.sources %}
+        <ul class="space-y-2 mb-4">
+          {% for src in project.sources %}
+          <li class="list-item">
+            <span class="flex items-center gap-2 min-w-0">
+              <span class="chip bg-ink text-white shrink-0">{{ src.source_type.value }}</span>
+              {% if src.label %}<span class="text-slate-600 text-sm truncate">{{ src.label }}</span>{% endif %}
+            </span>
+            <span class="flex gap-2 shrink-0">
+              <button type="button" class="btn-link btn-test-source" data-source-id="{{ src.id }}">Проверить</button>
+              <button type="button" class="btn-link btn-link-danger btn-delete-source" data-source-id="{{ src.id }}">Удалить</button>
+            </span>
+          </li>
+          {% endfor %}
+        </ul>
+        {% else %}
+        <p class="empty-hint mb-4">Нет привязанных источников</p>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Добавить источник -->
+    <div class="panel">
+      <p class="section-title mb-4">Добавить источник</p>
+      <form class="form-add-source space-y-4" data-project-id="{{ project.id }}">
+        <div class="grid sm:grid-cols-2 gap-3">
+          <div>
+            <label class="field-label">Тип</label>
+            <select name="source_type" class="fc source-type-select">
+              <option value="youtrack">YouTrack</option>
+              <option value="email">Почта (IMAP)</option>
+              <option value="calendar">Календарь (CalDAV/iCal)</option>
+              <option value="google_doc">Google Doc (Roadmap)</option>
+              <option value="google_sheet">Google Таблица (Roadmap / KPI)</option>
+            </select>
+          </div>
+          <div>
+            <label class="field-label">Метка</label>
+            <input name="label" class="fc" placeholder="Опционально">
+          </div>
+        </div>
+
+        <div class="source-fields space-y-3" data-type="youtrack">
+          <div class="grid sm:grid-cols-2 gap-3">
+            <div class="sm:col-span-2">
+              <label class="field-label">URL инстанса YouTrack</label>
+              <input class="fc" name="url" placeholder="https://youtrack.myfin.group">
+              <p class="text-xs text-slate-500 mt-1">Корень инстанса. Опционально: URL с <code>?query=</code> — доп. фильтр из UI.</p>
+            </div>
+            <div class="sm:col-span-2">
+              <label class="field-label">Permanent Token</label>
+              <input class="fc" name="token" type="password" placeholder="perm:…">
+            </div>
+            <div class="sm:col-span-2">
+              <label class="field-label">Компонент</label>
+              <input class="fc" name="component_name" placeholder="Криптокарта">
+              <p class="text-xs text-slate-500 mt-1">Имя как в YouTrack: <code>Компонент:&#123;Криптокарта&#125;</code>. Одно значение на внутренний проект.</p>
+            </div>
+            <div class="sm:col-span-2">
+              <label class="field-label">Project ID (опционально, fallback)</label>
+              <input class="fc" name="project_id" placeholder="{Kripto Card}">
+              <p class="text-xs text-slate-500 mt-1">Только если не используете поиск по компоненту.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="source-fields hidden space-y-3" data-type="email">
+          <div class="grid sm:grid-cols-2 gap-3">
+            <div>
+              <label class="field-label">IMAP сервер</label>
+              <input class="fc" name="imap_server" placeholder="imap.yandex.ru">
+            </div>
+            <div>
+              <label class="field-label">Порт</label>
+              <input class="fc" name="port" placeholder="993">
+            </div>
+          </div>
+          <div>
+            <label class="field-label">Email</label>
+            <input class="fc" name="email" type="email" placeholder="user@yandex.ru">
+          </div>
+          <div>
+            <label class="field-label">Пароль почты</label>
+            <input class="fc" name="mail_password" type="password" placeholder="Пароль приложения IMAP">
+          </div>
+          <p class="text-xs text-slate-500">
+            Из писем автоматически извлекаются встречи из календарных приглашений (.ics).
+          </p>
+        </div>
+
+        <div class="source-fields hidden space-y-3" data-type="calendar">
+          <div>
+            <label class="field-label">CalDAV / iCal URL</label>
+            <input class="fc" name="url" placeholder="https://caldav.yandex.ru/…">
+          </div>
+          <div class="grid sm:grid-cols-2 gap-3">
+            <div>
+              <label class="field-label">Логин</label>
+              <input class="fc" name="username" placeholder="Если нужен">
+            </div>
+            <div>
+              <label class="field-label">Пароль календаря</label>
+              <input class="fc" name="calendar_password" type="password" placeholder="Для CalDAV">
+            </div>
+          </div>
+        </div>
+
+        <div class="source-fields hidden space-y-3" data-type="google_doc">
+          <div>
+            <label class="field-label">ID Google Документа</label>
+            <input class="fc" name="document_id" placeholder="1BxiMVs0XRA5nFMdKvBdBZjgm…">
+          </div>
+          <p class="text-xs text-slate-500">Расшарьте документ «всем, у кого есть ссылка» на чтение.</p>
+        </div>
+
+
+        <div class="source-fields hidden space-y-3" data-type="google_sheet">
+          <div>
+            <label class="field-label">ID Google Таблицы</label>
+            <input class="fc" name="spreadsheet_id" placeholder="ID или ссылка на таблицу">
+          </div>
+          <div class="grid sm:grid-cols-2 gap-3">
+            <div>
+              <label class="field-label">GID листа</label>
+              <input class="fc" name="gid" placeholder="0 (по умолчанию)">
+              <p class="text-xs text-slate-500 mt-1">Из URL: #gid=123</p>
+            </div>
+            <div>
+              <label class="field-label">Название листа</label>
+              <input class="fc" name="sheet_name" placeholder="Roadmap Q2 / KPI (опционально)">
+            </div>
+          </div>
+          <p class="text-xs text-slate-500">
+            Roadmap в таблице, KPI, эпики, статусы — всё в CSV. Доступ по ссылке: читатель.
+          </p>
+        </div>
+
+        <div class="pt-1">
+          <button type="submit" class="btn-primary">+ Добавить источник</button>
+        </div>
+      </form>
+    </div>
+
+    <div class="flex justify-end pt-1 border-t border-slate-100">
+      <button type="button" class="btn-danger btn-delete-project" data-project-id="{{ project.id }}">
+        Удалить проект
+      </button>
+    </div>
+  </div>
+</article>
+{% else %}
+<div class="card p-12 text-center">
+  <div class="w-14 h-14 rounded-2xl bg-lime-100 flex items-center justify-center mx-auto mb-4">
+    <svg class="w-7 h-7 text-lime-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/>
+    </svg>
+  </div>
+  <p class="text-slate-600 font-medium">Проектов пока нет</p>
+  <p class="text-sm text-slate-400 mt-1">Создайте первый проект в форме выше</p>
+</div>
+{% endfor %}
+</div>
+
+<div id="roadmap-preview-modal" class="hidden fixed inset-0 z-50 overflow-y-auto">
+  <div class="flex min-h-screen items-center justify-center p-4">
+    <div class="fixed inset-0 modal-backdrop" id="roadmap-preview-backdrop"></div>
+    <div class="relative card max-w-5xl w-full p-6 sm:p-7 max-h-[90vh] flex flex-col">
+      <div class="flex justify-between items-start gap-4 mb-4 shrink-0">
+        <div>
+          <h2 class="text-lg font-bold" id="roadmap-preview-title">Таблица roadmap</h2>
+          <p class="text-xs text-slate-500 mt-1" id="roadmap-preview-meta"></p>
+        </div>
+        <div class="flex flex-wrap gap-2 shrink-0">
+          <button type="button" id="roadmap-preview-refresh" class="btn-ghost btn-sm">Обновить из Google</button>
+          <button type="button" id="roadmap-preview-save" class="btn-primary btn-sm">Сохранить в базу</button>
+          <button type="button" id="roadmap-preview-close" class="btn-ghost btn-sm">Закрыть</button>
+        </div>
+      </div>
+      <div id="roadmap-preview-loading" class="hidden py-12 text-center text-slate-500">
+        <p>Загрузка…</p>
+      </div>
+      <div id="roadmap-preview-warnings" class="hidden mb-3 text-sm text-amber-800 bg-amber-50 rounded-xl px-4 py-3 shrink-0"></div>
+      <div id="roadmap-preview-empty" class="hidden py-8 text-center text-slate-500 shrink-0">
+        Нет строк. Добавьте Google Sheet или Doc и проверьте доступ по ссылке.
+      </div>
+      <div id="roadmap-preview-table-wrap" class="hidden overflow-auto flex-1 min-h-0 border border-slate-200 rounded-xl">
+        <table class="w-full text-sm roadmap-table">
+          <thead class="bg-slate-50 sticky top-0" id="roadmap-preview-thead"></thead>
+          <tbody id="roadmap-preview-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="project-edit-modal" class="hidden fixed inset-0 z-50 overflow-y-auto">
+  <div class="flex min-h-screen items-center justify-center p-4">
+    <div class="fixed inset-0 modal-backdrop" id="project-edit-backdrop"></div>
+    <div class="relative card max-w-lg w-full p-7">
+      <h2 class="text-lg font-bold mb-1">Редактировать проект</h2>
+      <p class="text-xs text-slate-500 mb-5">Описание используется для автораспределения почты и встреч по проектам.</p>
+      <form id="form-edit-project" class="space-y-4">
+        <input type="hidden" id="edit-project-id" name="project_id">
+        <div>
+          <label class="field-label">Название</label>
+          <input class="fc" name="name" id="edit-project-name" required>
+        </div>
+        <div>
+          <label class="field-label">Описание (контекст сегментации)</label>
+          <textarea class="fc" name="description" id="edit-project-description" rows="4" placeholder="Ключевые слова, продукты, эпики…"></textarea>
+        </div>
+        <div class="flex gap-2 justify-end pt-2">
+          <button type="button" id="project-edit-cancel" class="btn-ghost">Отмена</button>
+          <button type="submit" class="btn-accent">Сохранить</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/projects.js?v=8"></script>
+{% endblock %}

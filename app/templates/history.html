@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% block title %}История — Project Hub{% endblock %}
+
+{% block content %}
+<div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
+  <div>
+    <p class="page-eyebrow">Архив</p>
+    <h1 class="page-title">История отчётов</h1>
+    <p class="text-sm text-slate-500 mt-1">Клик по строке открывает отчёт на отдельной странице</p>
+  </div>
+  <div class="stat-pill">
+    Сохранено: <strong>{{ reports|length }}</strong>
+  </div>
+</div>
+
+<div class="card overflow-hidden">
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Дата</th>
+        <th>Отчёт</th>
+        <th>Модель</th>
+        <th>RAG</th>
+        <th>Синк</th>
+        <th>Gamma</th>
+        <th class="w-52"></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in reports %}
+      <tr class="report-row hover:bg-slate-50">
+        <td class="text-slate-600">
+          <a href="/reports/{{ r.id }}" class="block py-1">{{ r.created_at }}</a>
+        </td>
+        <td class="font-semibold text-ink">
+          <a href="/reports/{{ r.id }}" class="hover:underline">
+            {{ r.project_name }}
+            {% if r.is_portfolio %}
+            <span class="chip bg-slate-100 text-slate-600 ml-1 text-[10px]">портфель</span>
+            {% endif %}
+          </a>
+        </td>
+        <td class="text-slate-600">
+          <a href="/reports/{{ r.id }}" class="block">{{ r.model }}</a>
+        </td>
+        <td>
+          <a href="/reports/{{ r.id }}"><span class="chip {{ r.rag_class }}">{{ r.rag_status }}</span></a>
+        </td>
+        <td>
+          {% if r.has_sync %}
+          <a href="/sync-tasks#report-{{ r.id }}" class="chip bg-lime-100 text-lime-700 hover:bg-lime-200">{{ r.meeting_count }} встреч · {{ r.task_count }} задач</a>
+          {% else %}
+          <span class="text-slate-400 text-sm">—</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if r.gamma_url %}
+          <a href="{{ r.gamma_url }}" target="_blank" rel="noopener noreferrer" class="text-xs font-semibold text-indigo-700 hover:underline">Открыть Gamma</a>
+          {% elif r.gamma_export_url %}
+          <a href="{{ r.gamma_export_url }}" target="_blank" rel="noopener noreferrer" class="text-xs font-semibold text-indigo-700 hover:underline">Скачать .pptx</a>
+          {% else %}
+          <span class="text-slate-400 text-sm">—</span>
+          {% endif %}
+        </td>
+        <td>
+          <div class="flex items-center justify-end gap-2">
+            <button
+              type="button"
+              class="btn-ghost text-xs !py-1 !px-2 text-indigo-700 hover:bg-indigo-50 btn-gamma-report"
+              data-report-id="{{ r.id }}"
+              data-report-name="{{ r.project_name | e }}"
+            >
+              Преза (Gamma)
+            </button>
+            <button type="button" class="btn-ghost text-xs !py-1 !px-2 text-red-600 hover:bg-red-50 btn-delete-report" data-report-id="{{ r.id }}" data-report-name="{{ r.project_name | e }}">Удалить</button>
+          </div>
+        </td>
+      </tr>
+      {% else %}
+      <tr>
+        <td colspan="7" class="text-center py-12">
+          <p class="text-slate-500 text-sm">Отчётов пока нет — сгенерируйте первый на дашборде</p>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script defer src="/static/js/history.js?v=7"></script>
+{% endblock %}

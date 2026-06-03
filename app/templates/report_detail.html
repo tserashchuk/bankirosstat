@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block title %}{{ display_name }} — Project Hub{% endblock %}
+
+{% block content %}
+<div class="mb-6">
+  <a href="/history" class="text-sm text-slate-500 hover:text-ink">← История отчётов</a>
+</div>
+
+<div class="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4 mb-6">
+  <div>
+    <p class="page-eyebrow">Отчёт</p>
+    <h1 class="page-title">{{ display_name }}</h1>
+    <p class="text-sm text-slate-500 mt-1">{{ created_at }} · {{ model_label }}</p>
+  </div>
+  <div class="flex flex-wrap items-center gap-2">
+    <span class="chip {{ rag_class }}">{{ rag_status }}</span>
+    {% if is_portfolio %}<span class="chip bg-slate-100 text-slate-600">портфель</span>{% endif %}
+    {% if has_sync %}
+    <a href="/sync-tasks#report-{{ report_id }}" class="chip bg-lime-100 text-lime-700">{{ meeting_count }} встреч · {{ task_count }} задач</a>
+    {% endif %}
+    <button type="button" id="btn-delete-report" class="btn-ghost text-red-600 hover:bg-red-50">Удалить отчёт</button>
+  </div>
+</div>
+
+<div class="grid lg:grid-cols-5 gap-5">
+  <div class="lg:col-span-3">
+    <div class="card flex flex-col min-h-[480px]">
+      <div class="flex items-center justify-between px-6 pt-5 pb-3 border-b border-slate-100">
+        <div class="tab-group">
+          <button type="button" data-tab="preview" class="tab-btn report-tab active">Preview</button>
+          <button type="button" data-tab="edit" class="tab-btn report-tab">Редактор</button>
+        </div>
+      </div>
+      <div id="preview-pane" class="flex-1 px-7 pb-7 overflow-auto markdown-body min-h-[320px]"></div>
+      <textarea id="edit-pane" class="hidden flex-1 px-7 pb-7 font-mono text-sm border-0 resize-none bg-transparent min-h-[320px]" rows="16" data-initial="1"></textarea>
+    </div>
+    <p id="save-error" class="hidden text-sm text-red-600 bg-red-50 rounded-xl px-4 py-3 mt-3"></p>
+    <div class="flex gap-2 mt-4">
+      <button type="button" id="btn-copy" class="btn-ghost flex-1">Копировать</button>
+      <button type="button" id="btn-save" class="btn-primary flex-1">Сохранить изменения</button>
+    </div>
+  </div>
+
+  <div class="lg:col-span-2 space-y-4">
+    <section class="card p-6">
+      <h2 class="text-sm font-bold text-ink mb-1">Расшифровки созвонов / синков</h2>
+      <p class="text-xs text-slate-500 mb-4">К одному отчёту можно добавить заметки после нескольких встреч. Задачи — в <a href="/sync-tasks" class="underline font-medium">Задачи синка</a></p>
+      <div id="sync-meetings-list" class="space-y-4 mb-4"></div>
+      <form id="report-sync-form" class="space-y-3 border-t border-slate-100 pt-4">
+        <p class="text-xs font-semibold text-ink">Добавить встречу</p>
+        <div>
+          <label class="field-label text-xs" for="sync-title">Название встречи</label>
+          <input id="sync-title" type="text" class="fc text-sm" placeholder="Еженедельный синк #2" />
+        </div>
+        <div>
+          <label class="field-label text-xs" for="sync-date">Дата встречи</label>
+          <input id="sync-date" type="date" class="fc text-sm" />
+        </div>
+        <div>
+          <label class="field-label text-xs" for="sync-model">ИИ-модель</label>
+          <select id="sync-model" class="fc text-sm">
+            {% for m in models %}
+            <option value="{{ m.key }}" {% if m.key == default_model %}selected{% endif %} {% if not m.enabled %}disabled{% endif %}>
+              {{ m.label }}{% if not m.enabled %} (нет ключа){% endif %}
+            </option>
+            {% endfor %}
+          </select>
+        </div>
+        <div>
+          <label class="field-label text-xs" for="sync-transcript">Расшифровка / заметки</label>
+          <textarea id="sync-transcript" class="fc text-sm min-h-[140px]" placeholder="Вставьте текст после звонка…"></textarea>
+        </div>
+        <div class="flex flex-wrap gap-2 items-center">
+          <button type="submit" id="sync-submit" class="btn-accent text-sm w-full">Добавить и извлечь задачи</button>
+          <div id="sync-loader" class="hidden flex items-center gap-2 text-xs text-slate-600 w-full justify-center">
+            <svg class="animate-spin h-3.5 w-3.5 text-ink" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+            </svg>
+            <span>Извлечение…</span>
+          </div>
+        </div>
+        <p id="sync-error" class="hidden text-xs text-red-600 bg-red-50 rounded-lg px-3 py-2"></p>
+      </form>
+    </section>
+  </div>
+</div>
+
+<input type="hidden" id="report-id" value="{{ report_id }}" />
+{% endblock %}
+
+{% block scripts %}
+<script defer src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script defer src="/static/js/report_detail.js?v=3"></script>
+{% endblock %}

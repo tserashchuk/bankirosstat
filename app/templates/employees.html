@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+{% block title %}Сотрудники — Project Hub{% endblock %}
+
+{% block content %}
+<div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
+  <div>
+    <p class="page-eyebrow">Команда</p>
+    <h1 class="page-title">Сотрудники</h1>
+    <p class="text-sm text-slate-500 mt-2 max-w-lg">
+      Почта Yandex (IMAP) и календарь (CalDAV) — отдельные пароли. Встречи также извлекаются из приглашений в письмах.
+    </p>
+  </div>
+  <div class="stat-pill">
+    Всего: <strong>{{ employees|length }}</strong>
+  </div>
+</div>
+
+<div class="card p-6 sm:p-8 mb-6">
+  <h2 class="text-base font-bold text-ink mb-5">Новый сотрудник</h2>
+  <form id="form-new-employee" class="grid sm:grid-cols-2 gap-4 max-w-2xl">
+    <div class="sm:col-span-2">
+      <label class="field-label">ФИО</label>
+      <input class="fc" name="full_name" placeholder="Иван Иванов">
+    </div>
+    <div class="sm:col-span-2">
+      <label class="field-label">Почта Yandex</label>
+      <input class="fc" name="yandex_email" type="email" placeholder="ivan@yandex.ru">
+    </div>
+    <div>
+      <label class="field-label">Пароль почты</label>
+      <input class="fc" name="mail_password" type="password" placeholder="Пароль приложения, тип «Почта»">
+    </div>
+    <div>
+      <label class="field-label">Пароль календаря</label>
+      <input class="fc" name="calendar_password" type="password" placeholder="Пароль приложения, тип «Календарь»">
+    </div>
+    <p class="sm:col-span-2 text-xs text-slate-500">
+      Нужны <strong>два разных</strong> пароля приложения в
+      <a href="https://id.yandex.ru/security/app-passwords" class="underline font-medium" target="_blank" rel="noopener">Yandex ID</a>.
+      Включите IMAP в
+      <a href="https://mail.yandex.ru/#setup/client" class="underline font-medium" target="_blank" rel="noopener">настройках почты</a>.
+      Сервер: <code class="bg-slate-100 px-1 rounded text-ink">imap.yandex.com</code>.
+    </p>
+    <div class="sm:col-span-2">
+      <button type="submit" class="btn-accent">+ Добавить сотрудника</button>
+    </div>
+  </form>
+</div>
+
+<div class="card overflow-hidden">
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Сотрудник</th>
+        <th>Почта</th>
+        <th>Пароли</th>
+        <th style="text-align:right">Действия</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for e in employees %}
+      <tr>
+        <td>
+          <div class="flex items-center gap-3">
+            <span class="avatar avatar-sm bg-lime-300 text-ink">{{ e.full_name[0]|upper }}</span>
+            <span class="font-semibold text-ink">{{ e.full_name }}</span>
+          </div>
+        </td>
+        <td class="text-slate-600">{{ e.yandex_email or "—" }}</td>
+        <td>
+          <div class="flex flex-wrap gap-1">
+            {% if e.imap_password_encrypted %}
+            <span class="chip bg-lime-100 text-lime-700">почта</span>
+            {% else %}
+            <span class="chip bg-amber-100 text-amber-700">без почты</span>
+            {% endif %}
+            {% if e.calendar_password_encrypted %}
+            <span class="chip bg-lime-100 text-lime-700">календарь</span>
+            {% else %}
+            <span class="chip bg-amber-100 text-amber-700">без календаря</span>
+            {% endif %}
+          </div>
+        </td>
+        <td style="text-align:right">
+          <div class="flex items-center justify-end gap-3">
+            <button type="button" class="btn-link btn-test-employee" data-employee-id="{{ e.id }}">Проверить</button>
+            <button type="button" class="btn-link btn-edit-employee" data-employee-id="{{ e.id }}" data-name="{{ e.full_name }}" data-email="{{ e.yandex_email }}">Изменить</button>
+            <button type="button" class="btn-link btn-link-danger btn-delete-employee" data-employee-id="{{ e.id }}">Удалить</button>
+          </div>
+        </td>
+      </tr>
+      {% else %}
+      <tr>
+        <td colspan="4" class="text-center py-12">
+          <p class="text-slate-500 text-sm">Сотрудников пока нет — добавьте первого выше</p>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div id="edit-modal" class="hidden fixed inset-0 z-50 overflow-y-auto">
+  <div class="flex min-h-screen items-center justify-center p-4">
+    <div class="fixed inset-0 modal-backdrop" id="edit-backdrop"></div>
+    <div class="relative card max-w-md w-full p-7">
+      <h2 class="text-lg font-bold mb-5">Редактировать сотрудника</h2>
+      <form id="form-edit-employee" class="space-y-4">
+        <input type="hidden" name="employee_id" id="edit-employee-id">
+        <div>
+          <label class="field-label">ФИО</label>
+          <input class="fc" name="full_name" id="edit-full-name">
+        </div>
+        <div>
+          <label class="field-label">Почта Yandex</label>
+          <input class="fc" name="yandex_email" id="edit-yandex-email" type="email">
+        </div>
+        <div>
+          <label class="field-label">Новый пароль почты</label>
+          <input class="fc" name="mail_password" type="password" placeholder="Пусто = не менять">
+        </div>
+        <div>
+          <label class="field-label">Новый пароль календаря</label>
+          <input class="fc" name="calendar_password" type="password" placeholder="Пусто = не менять">
+        </div>
+        <div class="flex gap-2 justify-end pt-2">
+          <button type="button" id="edit-cancel" class="btn-ghost">Отмена</button>
+          <button type="submit" class="btn-accent">Сохранить</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/employees.js"></script>
+{% endblock %}

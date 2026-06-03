@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}Задачи синка — Project Hub{% endblock %}
+
+{% block content %}
+<div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
+  <div>
+    <p class="page-eyebrow">Action items</p>
+    <h1 class="page-title">Задачи синка</h1>
+    <p class="text-sm text-slate-500 mt-1">Сгруппированы по отчётам и встречам из истории</p>
+  </div>
+  <div class="stat-pill">
+    Всего задач: <strong>{{ total_tasks }}</strong>
+  </div>
+</div>
+
+{% if groups %}
+<div class="space-y-6">
+  {% for g in groups %}
+  <section id="report-{{ g.report_id }}" class="card overflow-hidden scroll-mt-24">
+    <div class="px-6 py-4 border-b border-slate-100 bg-slate-50/80 flex flex-wrap items-center justify-between gap-3">
+      <div>
+        <a href="/reports/{{ g.report_id }}" class="text-base font-bold text-ink hover:underline">{{ g.report_name }}</a>
+        <p class="text-xs text-slate-500 mt-0.5">{{ g.report_date }} · {{ g.meeting_count }} встреч(и)</p>
+      </div>
+      <div class="flex items-center gap-2">
+        <span class="chip {{ g.rag_class }}">{{ g.rag_status }}</span>
+        <a href="/reports/{{ g.report_id }}" class="text-xs font-semibold text-ink hover:underline">Открыть отчёт</a>
+      </div>
+    </div>
+    {% for meeting in g.meetings %}
+    <div id="meeting-{{ meeting.id }}" class="border-t border-slate-100">
+      <div class="px-6 py-3 bg-white flex items-center justify-between gap-2">
+        <h3 class="text-sm font-semibold text-ink">{{ meeting.title }}</h3>
+        <span class="text-xs text-slate-500">{{ meeting.meeting_date }} · {{ meeting.tasks|length }} задач</span>
+      </div>
+      {% if meeting.tasks %}
+      <ul class="divide-y divide-slate-100">
+        {% for t in meeting.tasks %}
+        <li class="px-6 py-4 flex items-start gap-3 hover:bg-slate-50/80 sync-task-row" data-task-id="{{ t.id }}">
+          <input type="checkbox" class="sync-task-check mt-1 rounded border-slate-300" data-task-id="{{ t.id }}" {% if t.done %}checked{% endif %} />
+          <div class="flex-1 min-w-0">
+            <p class="sync-task-title text-sm font-medium text-ink {% if t.done %}line-through text-slate-400{% endif %}">{{ t.title }}</p>
+            {% if t.description %}
+            <p class="text-xs text-slate-500 mt-1">{{ t.description }}</p>
+            {% endif %}
+            <p class="text-xs text-slate-400 mt-1">
+              {% if t.assignee %}{{ t.assignee }}{% endif %}
+              {% if t.due_date %} · до {{ t.due_date }}{% endif %}
+              · {{ t.priority_label }}
+            </p>
+          </div>
+          <button type="button" class="btn-ghost text-xs !py-1 text-red-600 btn-delete-task" data-task-id="{{ t.id }}">Удалить</button>
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p class="px-6 py-4 text-sm text-slate-500">Задачи не извлечены</p>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </section>
+  {% endfor %}
+</div>
+{% else %}
+<div class="card p-12 text-center">
+  <p class="text-slate-500 text-sm">Пока нет задач — добавьте расшифровку к отчёту в <a href="/history" class="font-semibold underline">истории</a></p>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script defer src="/static/js/sync_tasks.js?v=2"></script>
+{% endblock %}
