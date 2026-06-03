@@ -5,7 +5,7 @@ Self-hosted панель для агрегации проектных данны
 ## Возможности
 
 - Внутренние проекты с несколькими источниками: YouTrack, IMAP-почта, CalDAV/iCal, Google Docs (Roadmap)
-- Генерация отчёта одной кнопкой через Gemini, Claude или DeepSeek
+- Генерация отчёта одной кнопкой через DeepSeek или Claude
 - Markdown-preview с редактированием, копированием и архивом отчётов
 - Шифрование credentials в БД (Fernet)
 
@@ -154,9 +154,8 @@ arq app.services.jobs.worker.WorkerSettings
 |------------|----------|
 | `DATABASE_URL` | SQLite (по умолчанию) или PostgreSQL |
 | `ENCRYPTION_KEY` | **Обязательно** — Fernet-ключ для шифрования credentials в БД |
-| `GEMINI_API_KEY` | Google AI Studio |
-| `GEMINI_MODEL` | Опционально: ID модели Gemini |
 | `ANTHROPIC_API_KEY` | Claude |
+| `DEFAULT_LLM_MODEL` | Опционально: модель по умолчанию в UI (например `deepseek-v3`) |
 | `DEEPSEEK_API_KEY` | DeepSeek |
 | `GAMMA_API_KEY` | Gamma API — презентации из отчётов |
 | `GAMMA_TEMPLATE_ID` | File ID шаблона Gamma (`POST /generations/from-template`) |
@@ -171,7 +170,7 @@ arq app.services.jobs.worker.WorkerSettings
 python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
 
-Минимум для работы отчётов: `ENCRYPTION_KEY` + хотя бы один из `GEMINI_API_KEY`, `DEEPSEEK_API_KEY`, `ANTHROPIC_API_KEY`. Для кнопки «Преза (Gamma)» в истории — `GAMMA_API_KEY` и `GAMMA_TEMPLATE_ID`.
+Минимум для работы отчётов: `ENCRYPTION_KEY` + хотя бы один из `DEEPSEEK_API_KEY`, `ANTHROPIC_API_KEY`. Для кнопки «Преза (Gamma)» в истории — `GAMMA_API_KEY` и `GAMMA_TEMPLATE_ID`.
 
 ## Страницы
 
