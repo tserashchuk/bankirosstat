@@ -17,10 +17,12 @@ from app.database import engine
 from app.models import InternalProject, ReportHistory, SyncMeeting
 from app.repositories import get_project_with_sources
 from app.services.jobs.store import (
+    JobCancelledError,
     finish_job_error,
     finish_job_ok,
     get_job,
     mark_running,
+    raise_if_job_cancelled,
     update_progress,
 )
 
@@ -57,6 +59,7 @@ async def roadmap_save(ctx: dict[str, Any], job_id: str) -> None:
     mark_running(job_id, "Скачиваем roadmap из Google...")
 
     try:
+        raise_if_job_cancelled(job_id)
         with Session(engine) as session:
             project, sources = get_project_with_sources(session, project_id)
             if not project:
@@ -81,6 +84,8 @@ async def roadmap_save(ctx: dict[str, Any], job_id: str) -> None:
             },
             progress=f"Сохранено строк: {len(result.get('rows') or [])}",
         )
+    except JobCancelledError:
+        logger.info("roadmap_save cancelled job_id=%s", job_id)
     except Exception as exc:
         logger.exception("roadmap_save failed job_id=%s", job_id)
         finish_job_error(job_id, str(exc))
@@ -116,6 +121,7 @@ async def sync_attach(ctx: dict[str, Any], job_id: str) -> None:
     mark_running(job_id, "Извлекаем задачи из расшифровки...")
 
     try:
+        raise_if_job_cancelled(job_id)
         with Session(engine) as session:
             meeting, tasks = await attach_sync_to_report(
                 session,
@@ -140,6 +146,8 @@ async def sync_attach(ctx: dict[str, Any], job_id: str) -> None:
             },
             progress=f"Извлечено задач: {tasks_count}",
         )
+    except JobCancelledError:
+        logger.info("sync_attach cancelled job_id=%s", job_id)
     except ValueError as exc:
         finish_job_error(job_id, str(exc))
     except Exception as exc:
@@ -170,6 +178,7 @@ async def sync_reextract(ctx: dict[str, Any], job_id: str) -> None:
     mark_running(job_id, "Перегенерируем задачи через ИИ...")
 
     try:
+        raise_if_job_cancelled(job_id)
         with Session(engine) as session:
             meeting = session.get(SyncMeeting, meeting_id)
             if not meeting:
@@ -199,6 +208,8 @@ async def sync_reextract(ctx: dict[str, Any], job_id: str) -> None:
             },
             progress=f"Извлечено задач: {len(tasks)}",
         )
+    except JobCancelledError:
+        logger.info("sync_reextract cancelled job_id=%s", job_id)
     except ValueError as exc:
         finish_job_error(job_id, str(exc))
     except Exception as exc:

@@ -18,6 +18,7 @@ from app.services.collectors.email_imap import collect_email
 from app.services.collectors.youtrack import collect_youtrack
 from app.services.collectors.collect_log import log_collect_block, log_snapshot_summary
 from app.services.roadmap_normalize import enrich_snapshot_with_roadmap_table
+from app.services.milestones import enrich_snapshot_with_milestones
 from app.services.source_creds import (
     can_collect,
     decrypt_normalized,
@@ -169,6 +170,7 @@ async def collect_project_data(
     _merge_email_meetings_into_calendar(snapshot)
     if session is not None and project_id is not None:
         enrich_snapshot_with_roadmap_table(snapshot, session, project_id)
+        enrich_snapshot_with_milestones(snapshot, session, project_id)
     log_snapshot_summary(snapshot, project=str(project_id))
     return _truncate_snapshot(snapshot)
 

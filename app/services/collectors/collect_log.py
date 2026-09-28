@@ -107,11 +107,13 @@ def log_snapshot_summary(snapshot: dict[str, Any], *, project: str) -> None:
             email_msgs += len(block.get("messages") or [])
 
     roadmap = len(snapshot.get("roadmap_table") or [])
+    milestones = len(snapshot.get("milestones") or [])
     logger.info(
-        "Snapshot %r: youtrack=%s issues, calendar=%s events, email=%s messages, roadmap=%s rows",
+        "Snapshot %r: youtrack=%s issues, calendar=%s events, email=%s messages, roadmap=%s rows, milestones=%s",
         project,
         yt_issues,
         cal_events,
         email_msgs,
         roadmap,
+        milestones,
     )

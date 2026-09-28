@@ -18,12 +18,14 @@
   const dropdown = document.getElementById("notifications-dropdown");
   const listEl = document.getElementById("notifications-list");
   const emptyEl = document.getElementById("notifications-empty");
+  const cancelAllBtn = document.getElementById("notifications-cancel-all");
 
   if (!bellBtn || !dropdown || !listEl) return;
 
   let timer = null;
   let dropdownOpen = false;
   let lastJobs = [];
+  let cancellingAll = false;
 
   function loadAcked() {
     try {
@@ -111,6 +113,18 @@
       read.add(job.id);
     }
     saveRead(read);
+  }
+
+  function activeJobs(jobs) {
+    return (jobs || []).filter((j) => j.status === "pending" || j.status === "running");
+  }
+
+  function updateCancelAllButton(jobs) {
+    if (!cancelAllBtn) return;
+    const hasActive = activeJobs(jobs).length > 0;
+    cancelAllBtn.classList.toggle("hidden", !hasActive);
+    cancelAllBtn.disabled = cancellingAll || !hasActive;
+    cancelAllBtn.textContent = cancellingAll ? "Останавливаем..." : "Остановить все";
   }
 
   function unreadCount(jobs) {
@@ -219,6 +233,7 @@
     });
 
     updateBadge(jobs);
+    updateCancelAllButton(jobs);
 
     if (visible.length === 0) {
       listEl.innerHTML = "";
@@ -265,6 +280,34 @@
     if (e.key === "Escape" && dropdownOpen) closeDropdown();
   });
 
+  async function cancelAllJobs() {
+    if (cancellingAll || activeJobs(lastJobs).length === 0) return;
+    if (!window.confirm("Остановить все активные задачи?")) return;
+
+    cancellingAll = true;
+    updateCancelAllButton(lastJobs);
+
+    try {
+      const res = await fetch("/api/jobs/cancel-all", { method: "POST" });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || `HTTP ${res.status}`);
+      }
+      await poll();
+      window.dispatchEvent(new CustomEvent("jobs-cancelled"));
+    } catch (e) {
+      alert(e.message || "Не удалось остановить задачи");
+    } finally {
+      cancellingAll = false;
+      updateCancelAllButton(lastJobs);
+    }
+  }
+
+  cancelAllBtn?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    cancelAllJobs();
+  });
+
   async function poll() {
     try {
       const res = await fetch("/api/jobs/active");
@@ -288,6 +331,7 @@
 
   window.JobsWidget = {
     refresh: poll,
+    cancelAll: cancelAllJobs,
     markRead: (jobId) => {
       const read = loadRead();
       read.add(jobId);

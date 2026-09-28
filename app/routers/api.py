@@ -39,13 +39,25 @@ from app.services.collectors.google_doc import test_google_doc_connection
 from app.services.collectors.google_sheet import test_google_sheet_connection
 from app.services.collectors.youtrack import test_youtrack_connection
 from app.services.jobs import (
+    cancel_all_active_jobs,
     create_job,
     get_job as get_bg_job,
     list_active_jobs,
     serialize_job,
 )
 from app.services.jobs.queue import enqueue
-from app.services.llm.prompts import normalize_report_format
+from app.services.llm.prompts import (
+    REPORT_FORMAT_MILESTONE_GAMMA,
+    REPORT_FORMAT_MILESTONE_SYNC,
+    is_milestone_report_format,
+    normalize_report_format,
+)
+from app.services.milestones import (
+    delete_project_milestones,
+    list_milestones,
+    replace_milestones,
+    serialize_milestone,
+)
 from app.repositories import delete_report_with_relations, get_project_with_sources
 from app.services.roadmap_normalize import fetch_roadmap_from_google
 from app.services.roadmap_repository import get_project_roadmap, roadmap_to_api_payload
@@ -64,7 +76,11 @@ from app.services.gamma import (
     create_generation_from_template as gamma_create_from_template,
     get_generation_status as gamma_get_generation_status,
 )
-from app.services.gamma_roadmap import build_gamma_prompt_for_report
+from app.services.gamma_roadmap import (
+    build_gamma_prompt_for_report,
+    gamma_num_cards_for_report,
+    infer_gamma_report_format,
+)
 
 router = APIRouter(prefix="/api")
 logger = logging.getLogger(__name__)
@@ -109,9 +125,23 @@ class ProjectUpdateRequest(BaseModel):
     description: str = ""
 
 
+class MilestoneItemRequest(BaseModel):
+    id: uuid.UUID | None = None
+    code: str = ""
+    title: str = ""
+    description: str = ""
+    deadline: str = ""
+    sort_order: int | None = None
+
+
+class MilestonesReplaceRequest(BaseModel):
+    items: list[MilestoneItemRequest] = []
+
+
 class GammaGenerateRequest(BaseModel):
     num_cards: int = 10
     export_as: str = "pptx"
+    text: str | None = None
 
 
 class GammaResultAttachRequest(BaseModel):
@@ -168,6 +198,42 @@ def get_project(project_id: uuid.UUID, session: Session = Depends(get_session)):
         "name": project.name,
         "description": project.description or "",
     }
+
+
+def _milestones_payload(session: Session, project: InternalProject) -> dict[str, Any]:
+    items = [serialize_milestone(row) for row in list_milestones(session, project.id)]
+    return {
+        "project_id": str(project.id),
+        "project_name": project.name,
+        "items": items,
+    }
+
+
+@router.get("/projects/{project_id}/milestones")
+def get_project_milestones(
+    project_id: uuid.UUID, session: Session = Depends(get_session)
+):
+    project = session.get(InternalProject, project_id)
+    if not project:
+        raise HTTPException(404, "Проект не найден")
+    return _milestones_payload(session, project)
+
+
+@router.put("/projects/{project_id}/milestones")
+def put_project_milestones(
+    project_id: uuid.UUID,
+    req: MilestonesReplaceRequest,
+    session: Session = Depends(get_session),
+):
+    project = session.get(InternalProject, project_id)
+    if not project:
+        raise HTTPException(404, "Проект не найден")
+    payload = [item.model_dump() for item in req.items]
+    try:
+        replace_milestones(session, project_id, payload)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return _milestones_payload(session, project)
 
 
 @router.get("/projects/{project_id}/roadmap")
@@ -246,6 +312,7 @@ def delete_project(project_id: uuid.UUID, session: Session = Depends(get_session
     project = session.get(InternalProject, project_id)
     if not project:
         raise HTTPException(404, "Проект не найден")
+    delete_project_milestones(session, project_id)
     session.delete(project)
     session.commit()
     return {"ok": True}
@@ -555,6 +622,17 @@ def jobs_active():
     }
 
 
+@router.post("/jobs/cancel-all")
+async def jobs_cancel_all(request: Request):
+    """Отменяет все задачи в очереди и в работе."""
+    pool = request.app.state.arq_pool
+    cancelled_ids = await cancel_all_active_jobs(pool)
+    return {
+        "cancelled": len(cancelled_ids),
+        "job_ids": cancelled_ids,
+    }
+
+
 @router.get("/jobs/{job_id}")
 def universal_job_status(job_id: str):
     job = get_bg_job(job_id)
@@ -667,26 +745,48 @@ async def generate_gamma_presentation(
         raise HTTPException(404, "Отчёт не найден")
     project = session.get(InternalProject, report.project_id) if report.project_id else None
     display_name = report_display_name(report, project)
+    incoming = (req.text or "").strip()
+    if incoming:
+        report.generated_text = incoming
+        session.add(report)
+        session.commit()
+        session.refresh(report)
     text = (report.generated_text or "").strip()
     if not text:
         raise HTTPException(400, "У отчёта пустой текст")
 
     snap = report.raw_data_snapshot or {}
-    if snap.get("portfolio"):
+    fmt = infer_gamma_report_format(report)
+    if is_milestone_report_format(fmt):
+        if snap.get("portfolio"):
+            n = len(snap.get("projects") or [])
+            if fmt == REPORT_FORMAT_MILESTONE_GAMMA:
+                title = f"Milestone + план презы — портфель ({n})"
+            else:
+                title = f"Синхронизация с milestone — портфель ({n})"
+        elif fmt == REPORT_FORMAT_MILESTONE_GAMMA:
+            title = f"{display_name} — milestone + план презы"
+        else:
+            title = f"{display_name} — синхронизация с milestone"
+    elif snap.get("portfolio"):
         n = len(snap.get("projects") or [])
         title = f"Портфель ({n} проектов) — отчётная презентация"
     else:
         title = f"{display_name} — отчётная презентация"
     template_id = (settings.gamma_template_id or "").strip()
+    use_template = bool(template_id)
     sync_tasks_block = _build_gamma_sync_tasks_block(session, report_id)
+    if is_milestone_report_format(fmt):
+        sync_tasks_block = ""
     gamma_body = build_gamma_prompt_for_report(
         session,
         report,
         sync_tasks_block=sync_tasks_block,
-        from_template=bool(template_id),
+        from_template=use_template,
     )
+    num_cards = gamma_num_cards_for_report(report, req.num_cards)
     try:
-        if template_id:
+        if use_template:
             generation_id = await gamma_create_from_template(
                 gamma_id=template_id,
                 prompt=gamma_body,
@@ -697,7 +797,7 @@ async def generate_gamma_presentation(
             generation_id = await gamma_create_generation(
                 input_text=gamma_body,
                 title=title,
-                num_cards=req.num_cards,
+                num_cards=num_cards,
                 export_as=req.export_as,
                 language=settings.gamma_language,
             )

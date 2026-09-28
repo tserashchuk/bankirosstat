@@ -44,6 +44,26 @@ class InternalProject(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class ProjectMilestone(SQLModel, table=True):
+    """Контрольная точка проекта — эталон для отчёта «Синхронизация с milestone»."""
+
+    __tablename__ = "project_milestones"
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    project_id: uuid.UUID = Field(
+        foreign_key="internal_projects.id",
+        index=True,
+        ondelete="CASCADE",
+    )
+    code: str = Field(max_length=32)
+    title: str = Field(max_length=500)
+    description: Optional[str] = Field(default=None, sa_column=Column(Text))
+    deadline: Optional[str] = Field(default=None, max_length=32)
+    sort_order: int = Field(default=0)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class ProjectRoadmap(SQLModel, table=True):
     """Сохранённый roadmap проекта (все колонки и строки листа)."""
 

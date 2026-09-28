@@ -8,6 +8,7 @@ from datetime import datetime
 from types import SimpleNamespace
 from typing import Any, Optional
 
+from sqlalchemy.exc import InvalidRequestError
 from sqlmodel import Session, select
 
 from app.database import engine
@@ -25,10 +26,12 @@ from app.services.aggregator import collect_project_data
 from app.services.collectors.collect_log import log_snapshot_summary
 from app.services.portfolio_collect import collect_portfolio_snapshots
 from app.services.jobs.store import (
+    JobCancelledError,
     finish_job_error,
     finish_job_ok,
     get_job,
     mark_running,
+    raise_if_job_cancelled,
     update_progress,
 )
 from app.services.llm import generate_portfolio_summary, generate_report
@@ -38,6 +41,8 @@ from app.services.llm.youtrack_links import (
 )
 from app.services.llm.prompts import (
     REPORT_FORMAT_BRIEF_PROGRESS,
+    REPORT_FORMAT_MILESTONE_GAMMA,
+    REPORT_FORMAT_MILESTONE_SYNC,
     REPORT_FORMAT_STATUS,
     REPORT_FORMAT_STATUS_RESULTS,
     should_generate_portfolio_summary,
@@ -124,7 +129,12 @@ def _load_report_targets(
         for src in src_list:
             session.expunge(src)
         for emp in emp_list:
-            session.expunge(emp)
+            # В редких случаях Employee уже отвязан от сессии (например, из другого запроса).
+            # Игнорируем такие экземпляры, нам нужны только их поля.
+            try:
+                session.expunge(emp)
+            except InvalidRequestError:
+                pass
         targets.append(
             _ProjectTarget(
                 id=pid,
@@ -256,6 +266,10 @@ def _combine_reports(
         title = f"# Статус: результаты по проектам ({n})"
     elif report_format == REPORT_FORMAT_BRIEF_PROGRESS:
         title = f"# Краткий отчёт по проектам ({n})"
+    elif report_format == REPORT_FORMAT_MILESTONE_SYNC:
+        title = f"# Синхронизация с milestone ({n})"
+    elif report_format == REPORT_FORMAT_MILESTONE_GAMMA:
+        title = f"# Milestone + план презы ({n})"
     else:
         title = f"# Еженедельный отчёт по портфелю ({n} проектов)"
     lines = [
@@ -338,6 +352,8 @@ async def run_report_job(job_id: str) -> None:
     mark_running(job_id, "Сбор данных по проектам...")
 
     try:
+        raise_if_job_cancelled(job_id)
+
         with Session(engine) as session:
             targets = _load_report_targets(session, state.project_id)
 
@@ -349,6 +365,7 @@ async def run_report_job(job_id: str) -> None:
         portfolio_link_rules = None
 
         update_progress(job_id, "Сбор и распределение данных по проектам...")
+        raise_if_job_cancelled(job_id)
 
         collect_rows = _targets_for_collect(targets)
         with Session(engine) as collect_session:
@@ -378,6 +395,7 @@ async def run_report_job(job_id: str) -> None:
             }
 
         for index, target in enumerate(targets, start=1):
+            raise_if_job_cancelled(job_id)
             snapshot = snapshots_by_id.get(target.id, {})
             update_progress(
                 job_id,
@@ -434,6 +452,7 @@ async def run_report_job(job_id: str) -> None:
             project_count=len(state.project_reports),
         ):
             update_progress(job_id, "Саммари по портфелю...")
+            raise_if_job_cancelled(job_id)
             await asyncio.sleep(0)
             summary_items = _summary_items_from_reports(state.project_reports)
             try:
@@ -469,6 +488,7 @@ async def run_report_job(job_id: str) -> None:
         state.rag_status = portfolio_rag
         state.snapshot = {
             "portfolio": True,
+            "report_format": state.report_format,
             "portfolio_summary": portfolio_summary,
             "projects": [
                 {
@@ -483,12 +503,15 @@ async def run_report_job(job_id: str) -> None:
             ],
         }
 
+        raise_if_job_cancelled(job_id)
         finish_job_ok(
             job_id,
             _result_payload(state),
             progress=f"Готово: {total} проект(ов)",
         )
 
+    except JobCancelledError:
+        logger.info("Report job %s cancelled", job_id)
     except Exception as e:
         logger.exception("Report job %s failed", job_id)
         finish_job_error(job_id, format_llm_error(e))
@@ -556,7 +579,10 @@ def save_combined_from_job(session: Session, job: BackgroundJob) -> str | None:
     text = (job.result.get("report_text") or "").strip()
     if not text:
         return None
-    snapshot = job.result.get("snapshot") or {}
+    snapshot = dict(job.result.get("snapshot") or {})
+    fmt = job.result.get("report_format") or (job.payload or {}).get("report_format")
+    if fmt and not snapshot.get("report_format"):
+        snapshot["report_format"] = fmt
     model_key = str((job.payload or {}).get("model_key") or "")
     anchor_id = _anchor_project_id_from_job(session, job, snapshot)
     if not anchor_id:

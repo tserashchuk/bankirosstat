@@ -101,8 +101,13 @@ def prepare_snapshot_for_llm(snapshot: dict[str, Any]) -> dict[str, Any]:
             "emails": 40,
             "meetings": 40,
             "roadmap_table": 80,
+            "milestones": 40,
         },
     )
+
+    # Milestones — эталон: не выкидывать при обрезке контекста.
+    milestones_keep = data.get("milestones")
+    milestones_meta_keep = data.get("milestones_meta")
 
     max_chars = _max_context_chars()
     raw = json.dumps(data, ensure_ascii=False)
@@ -117,6 +122,7 @@ def prepare_snapshot_for_llm(snapshot: dict[str, Any]) -> dict[str, Any]:
         "calendar",
         "issues",
         "events",
+        "roadmap_table",
     )
     for key in list_keys:
         if key not in trimmed:
@@ -127,6 +133,11 @@ def prepare_snapshot_for_llm(snapshot: dict[str, Any]) -> dict[str, Any]:
         while len(json.dumps(trimmed, ensure_ascii=False)) > max_chars and val:
             val.pop()
             trimmed[f"_{key}_dropped_for_llm"] = trimmed.get(f"_{key}_dropped_for_llm", 0) + 1
+
+    if milestones_keep is not None:
+        trimmed["milestones"] = milestones_keep
+    if milestones_meta_keep is not None:
+        trimmed["milestones_meta"] = milestones_meta_keep
 
     if len(json.dumps(trimmed, ensure_ascii=False)) > max_chars:
         trimmed["_llm_context_note"] = (

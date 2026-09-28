@@ -10,16 +10,20 @@ import httpx
 from app.config import get_settings
 from app.models import RagStatus
 from app.services.llm.prompts import (
+    _milestone_rows,
     build_portfolio_summary_user_prompt,
     build_user_prompt,
     get_portfolio_summary_system,
     get_system_prompt,
+    is_milestone_report_format,
     normalize_report_format,
 )
 
 TEMPERATURE = 0.2
 MAX_OUTPUT_TOKENS = 8192
 MAX_OUTPUT_TOKENS_PRO = 4096
+# R1/reasoner: CoT и ответ делят один max_tokens — иначе content часто пустой.
+MAX_OUTPUT_TOKENS_REASONER = 32768
 GEMINI_FLASH_MODEL = "gemini-2.5-flash"
 
 MODEL_MAP = {
@@ -281,20 +285,69 @@ async def _call_deepseek(model_id: str, user_prompt: str, system_prompt: str) ->
         base_url=settings.deepseek_base_url,
         timeout=timeout,
     )
-    try:
-        resp = await client.chat.completions.create(
-            model=model_id,
-            temperature=TEMPERATURE,
-            max_tokens=MAX_OUTPUT_TOKENS,
-            messages=[
+    is_reasoner = "reasoner" in model_id.lower() or model_id.endswith("-r1")
+    # У reasoner system часто слабо держит формат — дублируем инструкции в user.
+    if is_reasoner:
+        messages = [
+            {
+                "role": "user",
+                "content": (
+                    f"{system_prompt.strip()}\n\n"
+                    "———\n"
+                    "Ниже данные и задание. Следуй формату из инструкций выше.\n"
+                    "———\n\n"
+                    f"{user_prompt}"
+                ),
+            }
+        ]
+        create_kwargs: dict[str, Any] = {
+            "model": model_id,
+            "max_tokens": MAX_OUTPUT_TOKENS_REASONER,
+            "messages": messages,
+        }
+    else:
+        create_kwargs = {
+            "model": model_id,
+            "temperature": TEMPERATURE,
+            "max_tokens": MAX_OUTPUT_TOKENS,
+            "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-        )
+        }
+    try:
+        resp = await client.chat.completions.create(**create_kwargs)
     except Exception as exc:
         logger.exception("DeepSeek request failed model=%s", model_id)
         raise RuntimeError(format_llm_error(exc)) from exc
-    return resp.choices[0].message.content or ""
+
+    choice = resp.choices[0] if resp.choices else None
+    message = choice.message if choice else None
+    content = (getattr(message, "content", None) or "").strip()
+    reasoning = (getattr(message, "reasoning_content", None) or "").strip()
+    finish = getattr(choice, "finish_reason", None) if choice else None
+    usage = getattr(resp, "usage", None)
+    logger.info(
+        "DeepSeek done model=%s finish=%s content_chars=%s reasoning_chars=%s usage=%s",
+        model_id,
+        finish,
+        len(content),
+        len(reasoning),
+        usage,
+    )
+    if content:
+        return content
+    if is_reasoner and finish == "length":
+        raise RuntimeError(
+            "DeepSeek R1 исчерпал лимит токенов на рассуждениях и не вернул отчёт. "
+            "Повторите запрос или выберите DeepSeek V3."
+        )
+    if is_reasoner and reasoning:
+        raise RuntimeError(
+            "DeepSeek R1 вернул только reasoning без финального текста. "
+            "Повторите запрос или выберите DeepSeek V3."
+        )
+    raise RuntimeError("DeepSeek вернул пустой ответ")
 
 
 async def complete_text(model_key: str, system_prompt: str, user_prompt: str) -> str:
@@ -316,6 +369,9 @@ def infer_rag_status(text: str) -> RagStatus:
         return RagStatus.RED
     if "🟡" in text or "AMBER" in text.upper():
         return RagStatus.AMBER
+    # Пустой/короткий ответ без явного статуса — не GREEN (частый глюк R1).
+    if len((text or "").strip()) < 40:
+        return RagStatus.AMBER
     return RagStatus.GREEN
 
 
@@ -335,6 +391,13 @@ async def generate_report(
         raise ValueError(f"Unknown model: {model_key}")
 
     fmt = normalize_report_format(report_format)
+    if is_milestone_report_format(fmt) and not _milestone_rows(snapshot):
+        return (
+            "Milestones для этого проекта не заданы. "
+            "Добавьте их на странице «Проекты» в карточке проекта.",
+            RagStatus.AMBER,
+        )
+
     system_prompt = get_system_prompt(fmt)
     user_prompt = build_user_prompt(
         project_name,

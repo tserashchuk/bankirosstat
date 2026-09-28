@@ -6,6 +6,7 @@
   const editPane = document.getElementById("edit-pane");
   const btnSave = document.getElementById("btn-save");
   const btnCopy = document.getElementById("btn-copy");
+  const btnGamma = document.getElementById("btn-gamma");
   const btnDelete = document.getElementById("btn-delete-report");
   const saveError = document.getElementById("save-error");
   const syncMeetingsList = document.getElementById("sync-meetings-list");
@@ -216,6 +217,81 @@
     await navigator.clipboard.writeText(getEditorText() || previewPane.innerText);
     btnCopy.textContent = "Скопировано!";
     setTimeout(() => { btnCopy.textContent = "Копировать"; }, 2000);
+  });
+
+  async function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  async function startGammaWithText(text) {
+    const res = await fetch(`/api/reports/${reportId}/gamma`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ num_cards: 10, export_as: "pptx", text }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || "Не удалось запустить генерацию Gamma");
+    return data.generation_id;
+  }
+
+  async function waitGammaResult(generationId) {
+    for (let i = 0; i < 90; i += 1) {
+      const res = await fetch(`/api/gamma/generations/${generationId}`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || "Ошибка проверки статуса Gamma");
+      if (data.status === "completed") return data;
+      if (data.status === "failed") {
+        throw new Error(data.raw?.error?.message || "Gamma не смог сгенерировать презентацию");
+      }
+      await sleep(5000);
+    }
+    throw new Error("Gamma генерирует слишком долго, попробуйте позже");
+  }
+
+  async function saveGammaLinks(generationId, result) {
+    const res = await fetch(`/api/reports/${reportId}/gamma`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        generation_id: generationId,
+        gamma_url: result.gamma_url || null,
+        export_url: result.export_url || null,
+      }),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.detail || "Не удалось сохранить ссылку Gamma");
+    }
+  }
+
+  btnGamma?.addEventListener("click", async () => {
+    const text = getEditorText().trim();
+    if (!text) {
+      showSaveError("Текст отчёта пустой");
+      return;
+    }
+    hideSaveError();
+    btnGamma.disabled = true;
+    const oldLabel = btnGamma.textContent;
+    btnGamma.textContent = "Старт...";
+    try {
+      const generationId = await startGammaWithText(text);
+      applyEditorContent(text);
+      btnGamma.textContent = "Gamma генерирует...";
+      const result = await waitGammaResult(generationId);
+      await saveGammaLinks(generationId, result);
+      const url = result.gamma_url || result.export_url;
+      if (url) window.open(url, "_blank", "noopener,noreferrer");
+      btnGamma.textContent = "Готово";
+      setTimeout(() => {
+        btnGamma.textContent = oldLabel;
+        btnGamma.disabled = false;
+      }, 1500);
+    } catch (e) {
+      showSaveError(e.message || "Не удалось сгенерировать презентацию");
+      btnGamma.textContent = oldLabel;
+      btnGamma.disabled = false;
+    }
   });
 
   async function deleteReport() {

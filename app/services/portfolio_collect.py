@@ -17,6 +17,7 @@ from app.services.collectors.employee_yandex import (
 )
 from app.services.collectors.youtrack import collect_youtrack
 from app.services.roadmap_normalize import enrich_snapshot_with_roadmap_table
+from app.services.milestones import enrich_snapshot_with_milestones
 from app.services.collectors.collect_log import log_collect_block, log_snapshot_summary
 from app.services.collectors.ical_utils import (
     event_involves_participant,
@@ -266,6 +267,7 @@ async def collect_portfolio_snapshots(
         snap = snapshots[pid]
         merge_email_meetings(snap)
         enrich_snapshot_with_roadmap_table(snap, session, pid)
+        enrich_snapshot_with_milestones(snap, session, pid)
         snapshots[pid] = _truncate_snapshot(snap)
         log_snapshot_summary(snap, project=project.name)
 

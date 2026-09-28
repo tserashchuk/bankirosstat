@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/css/app.css?v=6">
+  <link rel="stylesheet" href="/static/css/app.css?v=7">
 </head>
 <body class="font-sans bg-surface text-ink min-h-screen antialiased">
   <header class="px-6 lg:px-10 pt-6">
@@ -45,6 +45,7 @@
           <div id="notifications-dropdown" class="notifications-dropdown hidden" role="menu">
             <div class="notifications-dropdown__head">
               <span class="text-sm font-semibold text-ink">Уведомления</span>
+              <button type="button" id="notifications-cancel-all" class="notifications-cancel-all hidden" title="Остановить все задачи">Остановить все</button>
             </div>
             <p id="notifications-empty" class="notifications-empty text-sm text-slate-500 px-4 py-6 text-center">Нет активных задач</p>
             <ul id="notifications-list" class="notifications-list divide-y divide-slate-100"></ul>
@@ -126,7 +127,7 @@
   </script>
   <script defer src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <script defer src="/static/js/report_panel.js?v=1"></script>
-  <script defer src="/static/js/jobs_widget.js?v=3"></script>
+  <script defer src="/static/js/jobs_widget.js?v=4"></script>
   {% block scripts %}{% endblock %}
 </body>
 </html>

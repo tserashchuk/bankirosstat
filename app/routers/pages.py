@@ -20,6 +20,7 @@ from app.repositories import (
 )
 from app.services.report_history import report_display_name
 from app.services.llm.prompts import REPORT_FORMAT_BRIEF_PROGRESS, REPORT_FORMAT_LABELS
+from app.services.milestones import list_milestones_by_project_ids
 
 router = APIRouter()
 templates = Jinja2Templates(directory="app/templates")
@@ -98,8 +99,18 @@ async def employees_page(request: Request, session: Session = Depends(get_sessio
 async def projects_hub(request: Request, session: Session = Depends(get_session)):
     project_rows = list_projects_with_sources(session)
     all_employees = list_employees(session)
+    milestones_by_project = list_milestones_by_project_ids(
+        session, [p.id for p, _, _ in project_rows]
+    )
     projects = [
-        SimpleNamespace(id=p.id, name=p.name, description=p.description, sources=s, employees=e)
+        SimpleNamespace(
+            id=p.id,
+            name=p.name,
+            description=p.description,
+            sources=s,
+            employees=e,
+            milestones=milestones_by_project.get(p.id, []),
+        )
         for p, s, e in project_rows
     ]
     return templates.TemplateResponse(

@@ -10,7 +10,12 @@ from urllib.parse import parse_qs, unquote, urlparse
 import httpx
 
 from app.services.collectors.ical_utils import COLLECTION_PERIOD_DAYS
-from app.services.collectors.youtrack_activities import enrich_issues_with_period_activities
+from app.services.collectors.youtrack_activities import (
+    enrich_issues_with_period_activities,
+    is_in_progress_state,
+    issue_has_period_activity,
+    issue_is_in_progress,
+)
 from app.services.source_creds import decrypt_normalized
 
 logger = logging.getLogger(__name__)
@@ -20,6 +25,11 @@ _YOUTRACK_UPDATED_FILTERS = (
     "updated: {This week}",
     "Updated: {This Week}",
     "обновлена: {На этой неделе}",
+)
+_IN_PROGRESS_SEARCH_CLAUSES = (
+    "State: {In Progress}",
+    "Состояние: {В работе}",
+    "state: {В работе}",
 )
 _INTERNAL_PROJECT_ID_RE = re.compile(r"^\d+-\d+$")
 _ISSUE_FIELDS = (
@@ -92,6 +102,11 @@ def _build_component_search_queries(
         for comp in comp_variants:
             add(f"{week} {comp}")
             add(f"{comp} {week}")
+
+    for state_clause in _IN_PROGRESS_SEARCH_CLAUSES:
+        for comp in comp_variants:
+            add(f"{comp} {state_clause}")
+            add(f"{state_clause} {comp}")
 
     for comp in comp_variants:
         add(comp)
@@ -185,6 +200,7 @@ def _issue_updated_dt(issue: dict[str, Any]) -> datetime | None:
 def _filter_issues_by_period(
     issues: list[dict[str, Any]], days: int = COLLECTION_PERIOD_DAYS
 ) -> list[dict[str, Any]]:
+    """Фильтр по updated (до обогащения activities)."""
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
     out: list[dict[str, Any]] = []
     for issue in issues:
@@ -194,9 +210,38 @@ def _filter_issues_by_period(
     dropped = len(issues) - len(out)
     if dropped:
         logger.info(
-            "YouTrack: отфильтровано %s задач старше %s дн. (осталось %s)",
+            "YouTrack: отфильтровано %s задач старше %s дн. по updated (осталось %s)",
             dropped,
             days,
+            len(out),
+        )
+    return out
+
+
+def _filter_issues_after_enrichment(
+    issues: list[dict[str, Any]], days: int = COLLECTION_PERIOD_DAYS
+) -> list[dict[str, Any]]:
+    """Оставляет задачи с активностью за период, в работе сейчас или недавним updated."""
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    out: list[dict[str, Any]] = []
+    in_progress_kept = 0
+    for issue in issues:
+        if issue_has_period_activity(issue.get("period_events")):
+            out.append(issue)
+            continue
+        if issue_is_in_progress(issue):
+            out.append(issue)
+            in_progress_kept += 1
+            continue
+        updated = _issue_updated_dt(issue)
+        if updated is None or updated >= cutoff:
+            out.append(issue)
+    dropped = len(issues) - len(out)
+    if dropped or in_progress_kept:
+        logger.info(
+            "YouTrack: после activities отброшено %s, оставлено в работе %s (итого %s)",
+            dropped,
+            in_progress_kept,
             len(out),
         )
     return out
@@ -280,7 +325,7 @@ def _clean_issue(issue: dict[str, Any]) -> dict[str, Any]:
             state = value.get("name") if isinstance(value, dict) else str(value)
         elif name == "assignee" and value:
             assignee = value.get("name") if isinstance(value, dict) else str(value)
-        elif name == "компонент" and value:
+        elif name in ("компонент", "component") and value:
             components = _extract_component_names(value)
         elif "spent" in name and value:
             spent = value
@@ -301,6 +346,7 @@ def _clean_issue(issue: dict[str, Any]) -> dict[str, Any]:
         "id": issue.get("idReadable") or issue.get("numberInProject") or issue.get("id"),
         "summary": issue.get("summary"),
         "state": state,
+        "in_progress": is_in_progress_state(state),
         "assignee": assignee,
         "components": components,
         "spent_time": spent,
@@ -344,8 +390,8 @@ async def _collect_via_search_queries(
     page_size = 50
     active_query: str | None = None
     first_resp: httpx.Response | None = None
-    fallback_query: str | None = None
-    fallback_resp: httpx.Response | None = None
+    best_undated: tuple[str, httpx.Response, int] | None = None
+    fallback_dated: tuple[str, httpx.Response] | None = None
     last_error = ""
 
     for candidate in queries:
@@ -358,23 +404,37 @@ async def _collect_via_search_queries(
             logger.warning("YouTrack search rejected: %s", last_error)
             continue
         batch = _parse_issues_response(resp)
+        has_date = _search_query_has_date_filter(candidate)
         if batch:
-            active_query = candidate
-            first_resp = resp
             logger.info("YouTrack search probe: %s issues | query=%r", len(batch), candidate)
-            break
+            if has_date:
+                active_query = candidate
+                first_resp = resp
+                break
+            if best_undated is None or len(batch) > best_undated[2]:
+                best_undated = (candidate, resp, len(batch))
+            if not probe_until_nonempty:
+                active_query = candidate
+                first_resp = resp
+                break
+            continue
         logger.info("YouTrack search probe empty | query=%r", candidate)
-        if fallback_query is None:
-            fallback_query = candidate
-            fallback_resp = resp
+        if has_date and fallback_dated is None:
+            fallback_dated = (candidate, resp)
         if not probe_until_nonempty:
             active_query = candidate
             first_resp = resp
             break
 
-    if not active_query and fallback_query and fallback_resp:
-        active_query = fallback_query
-        first_resp = fallback_resp
+    if not active_query and best_undated:
+        active_query, first_resp, n = best_undated
+        logger.info(
+            "YouTrack search: недельные query пустые, берём без даты (%s задач) | query=%r",
+            n,
+            active_query,
+        )
+    elif not active_query and fallback_dated:
+        active_query, first_resp = fallback_dated
         logger.warning(
             "YouTrack search: все probe пустые, используем query=%r", active_query
         )
@@ -405,11 +465,12 @@ async def _collect_via_search_queries(
         skip += page_size
 
     raw_count = len(raw_issues)
+    # Предфильтр по updated только если в query уже нет даты и не ждём activitiesPage.
     apply_period = filter_period and not _search_query_has_date_filter(active_query)
     if apply_period:
         raw_issues = _filter_issues_by_period(raw_issues)
     logger.info(
-        "YouTrack search: raw=%s after_period=%s period_filter=%s query=%r",
+        "YouTrack search: raw=%s after_updated_prefilter=%s prefilter=%s query=%r",
         raw_count,
         len(raw_issues),
         apply_period,
@@ -454,7 +515,7 @@ async def collect_youtrack(credentials_encrypted: str) -> dict[str, Any]:
                 base_url,
                 headers,
                 search_queries,
-                filter_period=True,
+                filter_period=False,
                 probe_until_nonempty=True,
             )
             collection_mode = "component_search"
@@ -468,7 +529,7 @@ async def collect_youtrack(credentials_encrypted: str) -> dict[str, Any]:
                 base_url,
                 headers,
                 search_queries,
-                filter_period=True,
+                filter_period=False,
                 probe_until_nonempty=True,
             )
             collection_mode = "project_search"
@@ -481,6 +542,7 @@ async def collect_youtrack(credentials_encrypted: str) -> dict[str, Any]:
             issues = await enrich_issues_with_period_activities(
                 client, base_url, headers, issues
             )
+            issues = _filter_issues_after_enrichment(issues)
 
     if issues:
         preview = ", ".join(

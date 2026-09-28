@@ -16,6 +16,16 @@ from app.models import (
 
 logger = logging.getLogger(__name__)
 
+JOB_CANCELLED_MESSAGE = "Отменено пользователем"
+
+_TERMINAL_STATUSES = frozenset(
+    {BackgroundJobStatus.DONE, BackgroundJobStatus.ERROR}
+)
+
+
+class JobCancelledError(Exception):
+    """Задача отменена или уже завершена."""
+
 
 def _now() -> datetime:
     return datetime.utcnow()
@@ -75,6 +85,9 @@ def _update(job_id: uuid.UUID | str, **fields: Any) -> Optional[BackgroundJob]:
 
 
 def mark_running(job_id: uuid.UUID | str, progress: str = "Старт...") -> Optional[BackgroundJob]:
+    job = get_job(job_id)
+    if job and job.status in _TERMINAL_STATUSES:
+        return job
     return _update(
         job_id,
         status=BackgroundJobStatus.RUNNING,
@@ -84,7 +97,19 @@ def mark_running(job_id: uuid.UUID | str, progress: str = "Старт...") -> Op
 
 
 def update_progress(job_id: uuid.UUID | str, progress: str) -> None:
+    job = get_job(job_id)
+    if job and job.status in _TERMINAL_STATUSES:
+        return
     _update(job_id, progress=progress)
+
+
+def raise_if_job_cancelled(job_id: uuid.UUID | str) -> None:
+    """Прерывает выполнение, если задача уже отменена или завершена."""
+    job = get_job(job_id)
+    if not job:
+        raise JobCancelledError(JOB_CANCELLED_MESSAGE)
+    if job.status in _TERMINAL_STATUSES:
+        raise JobCancelledError(job.error or JOB_CANCELLED_MESSAGE)
 
 
 def finish_job_ok(
@@ -93,6 +118,9 @@ def finish_job_ok(
     *,
     progress: str = "Готово",
 ) -> Optional[BackgroundJob]:
+    job = get_job(job_id)
+    if job and job.status in _TERMINAL_STATUSES:
+        return job
     return _update(
         job_id,
         status=BackgroundJobStatus.DONE,
@@ -104,6 +132,9 @@ def finish_job_ok(
 
 
 def finish_job_error(job_id: uuid.UUID | str, message: str) -> Optional[BackgroundJob]:
+    job = get_job(job_id)
+    if job and job.status in _TERMINAL_STATUSES:
+        return job
     return _update(
         job_id,
         status=BackgroundJobStatus.ERROR,
@@ -111,6 +142,23 @@ def finish_job_error(job_id: uuid.UUID | str, message: str) -> Optional[Backgrou
         progress=f"Ошибка: {message}",
         finished_at=_now(),
     )
+
+
+def list_cancellable_jobs(limit: int = 50) -> list[BackgroundJob]:
+    """Задачи в очереди или в работе — их можно отменить."""
+    with Session(engine) as session:
+        return list(
+            session.exec(
+                select(BackgroundJob)
+                .where(
+                    BackgroundJob.status.in_(  # type: ignore[attr-defined]
+                        [BackgroundJobStatus.PENDING, BackgroundJobStatus.RUNNING]
+                    )
+                )
+                .order_by(BackgroundJob.created_at.desc())  # type: ignore[arg-type]
+                .limit(limit)
+            ).all()
+        )
 
 
 def list_active_jobs(limit: int = 20) -> list[BackgroundJob]:

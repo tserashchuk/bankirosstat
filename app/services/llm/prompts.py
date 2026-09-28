@@ -9,10 +9,14 @@ REPORT_FORMAT_5_15 = "5_15"
 REPORT_FORMAT_STATUS = "status"
 REPORT_FORMAT_STATUS_RESULTS = "status_results"
 REPORT_FORMAT_BRIEF_PROGRESS = "brief_progress"
+REPORT_FORMAT_MILESTONE_SYNC = "milestone_sync"
+REPORT_FORMAT_MILESTONE_GAMMA = "milestone_gamma"
 
 REPORT_FORMAT_LABELS = {
     REPORT_FORMAT_BRIEF_PROGRESS: "Кратко по пунктам + сравнение",
     REPORT_FORMAT_STATUS_RESULTS: "Статус: результаты и блоки работ",
+    REPORT_FORMAT_MILESTONE_SYNC: "Синхронизация с milestone",
+    REPORT_FORMAT_MILESTONE_GAMMA: "Milestone + план презы",
 }
 
 
@@ -22,6 +26,8 @@ class ReportFormat(str, Enum):
     STATUS = REPORT_FORMAT_STATUS
     STATUS_RESULTS = REPORT_FORMAT_STATUS_RESULTS
     BRIEF_PROGRESS = REPORT_FORMAT_BRIEF_PROGRESS
+    MILESTONE_SYNC = REPORT_FORMAT_MILESTONE_SYNC
+    MILESTONE_GAMMA = REPORT_FORMAT_MILESTONE_GAMMA
 
 
 def normalize_report_format(value: str | None) -> str:
@@ -49,13 +55,90 @@ def normalize_report_format(value: str | None) -> str:
         "новый",
     ):
         return REPORT_FORMAT_BRIEF_PROGRESS
+    if v in (
+        "milestone_gamma",
+        "milestone_preza",
+        "milestone_deck",
+        "milestone_presentation",
+        "план_презы",
+        "план презы",
+        "milestone + план презы",
+        "milestone_sync_gamma",
+    ):
+        return REPORT_FORMAT_MILESTONE_GAMMA
+    if v in (
+        "milestone_sync",
+        "milestones",
+        "milestone",
+        "синхронизация",
+        "синхронизация_с_milestone",
+        "milestone_sync_report",
+    ):
+        return REPORT_FORMAT_MILESTONE_SYNC
     return REPORT_FORMAT_BRIEF_PROGRESS
+
+
+def is_milestone_report_format(value: str | None) -> bool:
+    fmt = normalize_report_format(value)
+    return fmt in (REPORT_FORMAT_MILESTONE_SYNC, REPORT_FORMAT_MILESTONE_GAMMA)
 
 
 def current_quarter_label() -> str:
     now = datetime.utcnow()
     quarter = (now.month - 1) // 3 + 1
     return f"Q{quarter} {now.year}"
+
+
+def _milestone_rows(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+    rows = snapshot.get("milestones")
+    if not isinstance(rows, list):
+        return []
+    return [r for r in rows if isinstance(r, dict)]
+
+
+def _milestones_prompt_block(snapshot: dict[str, Any]) -> str:
+    """Эталон в начале user-prompt — иначе модель не видит его в большом JSON."""
+    rows = _milestone_rows(snapshot)
+    meta = snapshot.get("milestones_meta") if isinstance(snapshot.get("milestones_meta"), dict) else {}
+    as_of = meta.get("as_of") or "—"
+    if not rows:
+        return (
+            "MILESTONES_COUNT: 0\n"
+            "ЭТАЛОН MILESTONES: пусто. Только в этом случае напиши, что milestones не заданы."
+        )
+    lines = [
+        f"MILESTONES_COUNT: {len(rows)}",
+        f"Дата сверки (as_of): {as_of}",
+        "ЭТАЛОН MILESTONES (разбери каждый; фраза «не заданы» запрещена):",
+    ]
+    for row in rows:
+        code = (row.get("code") or "").strip() or "—"
+        title = (row.get("title") or "").strip() or "без названия"
+        due = (row.get("deadline_label") or row.get("deadline") or "").strip() or "без даты"
+        until = row.get("days_until_deadline")
+        if isinstance(until, int):
+            timing = f"просрочен на {abs(until)} дн." if until < 0 else f"через {until} дн."
+        else:
+            timing = "срок не посчитан"
+        overdue = "да" if row.get("overdue") else "нет"
+        criterion = (row.get("description") or "").strip() or "критерий не указан"
+        if len(criterion) > 280:
+            criterion = criterion[:280] + "…"
+        lines.append(
+            f"- {code} | {title} | дедлайн {due} ({timing}; overdue={overdue}) | критерий: {criterion}"
+        )
+    return "\n".join(lines)
+
+
+def _snapshot_with_milestones_first(snapshot: dict[str, Any]) -> dict[str, Any]:
+    ordered: dict[str, Any] = {}
+    for key in ("milestones", "milestones_meta"):
+        if key in snapshot:
+            ordered[key] = snapshot[key]
+    for key, value in snapshot.items():
+        if key not in ordered:
+            ordered[key] = value
+    return ordered
 
 
 def _roadmap_sources_hint(snapshot: dict[str, Any]) -> str:
@@ -205,6 +288,7 @@ SYSTEM_PROMPT_STATUS = f"""Ты — аналитик для учредителе
 
 ### Взяты в работу
 - period_events.started_in_period = true ИЛИ state_changes → «В работе» / In Progress.
+- Также включай задачи, у которых state / in_progress уже «В работе» / In Progress (текущий WIP), даже без событий за неделю.
 - Формат: ID: summary — assignee
 - Нет — «Нет данных».
 
@@ -276,6 +360,7 @@ SYSTEM_PROMPT_STATUS_RESULTS = f"""Ты — аналитик для учреди
 
 Внутри блока 2–4 пункта:
 - **Что делали** — обобщённо (встречи, переписка, задачи; можно 1–2 названия встреч/тем писем).
+- **В работе** — если есть задачи YouTrack со state «В работе» / in_progress=true, перечисли их в блоке (ID: summary).
 - **К чему идём** — целевой результат блока.
 - **Прогресс** — одно из: продвижение / стабильно / риск / пауза (обоснуй фактом).
 
@@ -323,7 +408,9 @@ SYSTEM_PROMPT_BRIEF_PROGRESS = f"""Ты — аналитик для учреди
 - Формат: «тема встречи/письма» — зачем это было — итог в 1 строке.
 
 ## 4. Какие задачи (YouTrack и письма)
-- 3–8 пунктов: ключевые задачи/договорённости из youtrack + email.
+- Сначала подзаголовок ### В работе (YouTrack) — все задачи со state «В работе» / In Progress или in_progress=true в JSON (включая без событий за неделю).
+- Формат в работе: ID: summary — assignee — что делается сейчас (1 строка).
+- Затем 3–8 пунктов остальных ключевых задач/договорённостей из youtrack + email.
 - Формат: ID: summary или «subject письма» — текущий шаг/статус.
 
 ## 5. К каким инициативам относится прогресс
@@ -338,6 +425,98 @@ SYSTEM_PROMPT_BRIEF_PROGRESS = f"""Ты — аналитик для учреди
 - Формат: «метрика/направление — было → стало — вывод».
 - Если истории нет: «Нет ранее сохранённых отчётов для сравнения».
 {_RAG_FOOTER}"""
+
+SYSTEM_PROMPT_MILESTONE_SYNC = f"""Ты — аналитик для учредителей. Отчёт «Синхронизация с milestone» на русском.
+
+Эталон плана — ТОЛЬКО блок «ЭТАЛОН MILESTONES» в пользовательском промпте и массив milestones[] в JSON.
+Roadmap не заменяет milestones. Пустой roadmap — не повод писать, что milestones не заданы.
+
+ПРАВИЛА:
+- Только факты из JSON (YouTrack, комментарии, встречи, письма). Не выдумывай.
+- Смотри MILESTONES_COUNT в начале пользовательского сообщения. Если MILESTONES_COUNT ≥ 1 — эталон УЖЕ передан; ЗАПРЕЩЕНО писать «Milestones не заданы» / «нет данных о milestones» / «ближайший не определён». Разбери ВСЕ пункты эталона по кодам.
+- Пустой roadmap / отсутствие roadmap_table — НЕ означает отсутствие milestones.
+- «Milestones не заданы в проекте. Добавьте их на странице Проекты» — ТОЛЬКО если MILESTONES_COUNT = 0.
+- «Достигнут» — только если факты явно закрывают критерий (description).
+- Комментарии YouTrack (comments_in_period, last_comment) и письма — полноценные факты.
+- overdue=true или days_until_deadline < 0 — просрочен, если не достигнут.
+- days_until_deadline 0–14 без прогресса — риск.
+
+ФОРМАТ (Markdown) — без вступлений:
+
+## 1. Сводка
+- Сколько milestones в эталоне (цифра из MILESTONES_COUNT) и общий RAG.
+- Список всех кодов: `- M1 title — статус — дедлайн — сторона — риск`
+- Сколько внешних партнёров найдено и сколько из них блокер / ждём ответа.
+
+## 2. По каждому milestone
+Для КАЖДОГО пункта эталона, без пропусков, в том же порядке. Подзаголовок:
+
+### {{code}} — {{title}}
+
+Обязательные поля у каждого:
+- **Дедлайн:** deadline_label. Если days_until_deadline ≥ 0 — «через N дн.»; если < 0 — «просрочен на N дн.»; если даты нет — «дедлайн не указан».
+- **Статус:** если по фактам недели можно оценить — одно из: достигнут / в работе / риск / просрочен. Если фактов нет — «нет подтверждения». 1 предложение почему.
+- **Сторона следующего действия:** кто должен сделать следующий шаг, чтобы закрыть критерий. Одно значение: Bankiros / имя партнёра из фактов (Bynex, Best2Pay, Paygine, Secure8, юристы и т.п.) / совместно / неясно.
+  Выводи из assignee, автора комментария, from/to писем и формулировки критерия (кто отдаёт договор, API, заключение). Не выдумывай компанию — если не ясно, пиши «неясно».
+- **Риск:** 1 короткая строка (просрочка, нет ответа партнёра, юридический блокер, нет фактов при близком дедлайне). Если риска нет — «нет».
+- **Следующие шаги:** если статус не «достигнут» — 1–3 шага, чтобы закрыть критерий (из задач/писем или из разрыва с description). Если достигнут — «не требуются». Если фактов нет — шаг из критерия + дедлайн, пометь как гипотезу.
+
+Дополнительно (если есть факты):
+- **Факты:** YouTrack ID: summary, комментарий, встреча, письмо.
+
+## 3. Статусы партнёров
+Обязательный раздел. Собери уникальный список **внешних сторон** (не Bankiros) из:
+- поля «Сторона следующего действия» по milestones;
+- критериев milestone (description/title);
+- писем (from/to, домен, тема);
+- комментариев и задач YouTrack;
+- встреч.
+
+Не выдумывай компании. Если в фактах нет ни одного внешнего имени — одна строка: «Внешние партнёры в данных периода не названы».
+Иначе для КАЖДОГО найденного партнёра, без пропусков:
+
+### {{имя партнёра}}
+
+- **Роль:** чем занимается в проекте (1 строка из фактов/критериев).
+- **Статус:** одно из: в работе / ждём ответа / блокер / закрыто / нет новостей.
+- **На стороне партнёра сейчас:** что должны сделать они (или «ничего — ход Bankiros»).
+- **Связанные milestones:** коды (M1, M4…).
+- **Последний контакт:** дата и канал (письмо/коммент/встреча) или «нет в периоде».
+- **Риск:** 1 строка или «нет».
+
+## 4. Просроченные и ближайшие 14 дней
+- По дедлайнам эталона. Нет — «Нет данных».
+
+## 5. Риски и фокус
+- До 4 рисков и до 3 шагов фокуса на неделю, с кодами milestone и именами партнёров.
+{_RAG_FOOTER}"""
+
+_MILESTONE_GAMMA_PLAN_APPENDIX = """
+## 6. План презентации для Gamma (рекомендация)
+Этот раздел — промежуточный слой для сборки презы, не часть управленческого отчёта для учредителей.
+
+В начале раздела обязательно одной строкой:
+> Рекомендация для Gamma, не правило. Можно упростить, объединить слайды или изменить порядок.
+
+Затем нумерованный план слайдов (8–14 позиций типично). Для каждого:
+- **Слайд N — короткий заголовок**
+- **Суть:** 1–3 тезиса только из разделов 1–5 (факты, коды M, партнёры, сторона действия)
+- **Визуал (рекомендация):** таблица / **диаграмма Ганта** / мини-картинка / без визуала
+- **Пометки для Gamma:** что выделить, что сократить, что не дублировать
+
+Правила раздела 6:
+- Не добавляй факты, статусы и партнёров, которых нет в разделах 1–5.
+- Мало текста на слайд; статусы словами, без RAG-светофора.
+- По возможности заложи слайд с **диаграммой Ганта** и слайд партнёров.
+- Если milestones = 0 — план из 1–2 слайдов («точки не заданы»).
+"""
+
+SYSTEM_PROMPT_MILESTONE_GAMMA = (
+    SYSTEM_PROMPT_MILESTONE_SYNC
+    + "\n\nДополнение формата «Milestone + план презы»:\n"
+    "После разделов 1–5 добавь раздел 6 ниже. Разделы 1–5 — те же, что в обычной синхронизации с milestone.\n"
+    + _MILESTONE_GAMMA_PLAN_APPENDIX.strip()
+)
 
 PORTFOLIO_SUMMARY_SYSTEM = """Ты — аналитик для учредителей. Краткое саммари по портфелю проектов на русском.
 
@@ -386,6 +565,33 @@ PORTFOLIO_SUMMARY_SYSTEM_STATUS_RESULTS = """Ты — аналитик для у
 - До 3 пунктов на уровне портфеля (только из отчётов).
 - Иначе: «Нет открытых решений по данным»."""
 
+PORTFOLIO_SUMMARY_SYSTEM_MILESTONES = """Ты — аналитик для учредителей. Саммари портфеля по отчётам «Синхронизация с milestone».
+
+ПРАВИЛА:
+- Только факты из переданных отчётов. Не выдумывай.
+- Фокус на дедлайнах, просрочках и разрывах относительно критериев milestone.
+- Если в тексте отчёта проекта есть коды M1/M2… или заголовки «### M» — milestones УЖЕ разобраны; не пиши «нет данных о milestones».
+- Строка «Milestones для этого проекта не заданы» — факт только для этого проекта.
+- Маркированные списки (- ), до 20 слов на пункт.
+- Светофор: 🟢 GREEN / 🟡 AMBER / 🔴 RED из поля rag.
+
+ФОРМАТ (Markdown):
+
+### Саммари по портфелю (milestones)
+- 4–6 пунктов: какие контрольные точки закрыты / под риском / просрочены. Укажи проект и код (M1…).
+- 1–2 пункта про партнёров: кто блокер / от кого ждём ответ.
+
+### По проектам
+Для каждого проекта — #### {Название проекта} {emoji}
+- 2–3 пункта: ближайший milestone, главный разрыв, главный риск.
+- 1 пункт: ключевые партнёры и их статус (если есть в отчёте проекта).
+- Если error — «Ошибка генерации отчёта».
+- Если в отчёте проекта действительно 0 milestones — одна строка об этом, не раздувай.
+
+### Решения для учредителей
+- До 3 пунктов: что решить, чтобы не сорвать ближайшие milestone (включая ход на стороне партнёра).
+- Иначе: «Нет открытых решений по данным»."""
+
 # Обратная совместимость
 SYSTEM_PROMPT = SYSTEM_PROMPT_STATUS_RESULTS
 
@@ -402,6 +608,10 @@ def get_system_prompt(report_format: str | None = None) -> str:
         return SYSTEM_PROMPT_STATUS_RESULTS.replace("{quarter}", quarter)
     if fmt == REPORT_FORMAT_BRIEF_PROGRESS:
         return SYSTEM_PROMPT_BRIEF_PROGRESS
+    if fmt == REPORT_FORMAT_MILESTONE_GAMMA:
+        return SYSTEM_PROMPT_MILESTONE_GAMMA
+    if fmt == REPORT_FORMAT_MILESTONE_SYNC:
+        return SYSTEM_PROMPT_MILESTONE_SYNC
     return SYSTEM_PROMPT_STATUS_RESULTS.replace("{quarter}", quarter)
 
 
@@ -419,7 +629,12 @@ def should_generate_portfolio_summary(
     if not all_projects or project_count < 1:
         return False
     fmt = normalize_report_format(report_format)
-    if fmt in (REPORT_FORMAT_STATUS_RESULTS, REPORT_FORMAT_BRIEF_PROGRESS):
+    if fmt in (
+        REPORT_FORMAT_STATUS_RESULTS,
+        REPORT_FORMAT_BRIEF_PROGRESS,
+        REPORT_FORMAT_MILESTONE_SYNC,
+        REPORT_FORMAT_MILESTONE_GAMMA,
+    ):
         return True
     if skips_portfolio_summary(fmt):
         return False
@@ -427,7 +642,10 @@ def should_generate_portfolio_summary(
 
 
 def get_portfolio_summary_system(report_format: str | None = None) -> str:
-    if normalize_report_format(report_format) in (
+    fmt = normalize_report_format(report_format)
+    if is_milestone_report_format(fmt):
+        return PORTFOLIO_SUMMARY_SYSTEM_MILESTONES
+    if fmt in (
         REPORT_FORMAT_STATUS_RESULTS,
         REPORT_FORMAT_BRIEF_PROGRESS,
     ):
@@ -450,6 +668,12 @@ def build_user_prompt(
     fmt = normalize_report_format(report_format)
     fmt_label = REPORT_FORMAT_LABELS.get(fmt, fmt)
     quarter = current_quarter_label()
+    if is_milestone_report_format(fmt):
+        snapshot = _snapshot_with_milestones_first(snapshot)
+        # Roadmap путает модели (особенно R1) с «нет плана» — для milestone-формата убираем.
+        snapshot.pop("roadmap_table", None)
+        snapshot.pop("roadmap_meta", None)
+        snapshot.pop("roadmap_text", None)
 
     context_block = ""
     if project_description and project_description.strip():
@@ -484,10 +708,21 @@ def build_user_prompt(
     elif fmt == REPORT_FORMAT_BRIEF_PROGRESS:
         fields_hint = """
 Поля в JSON (формат «Кратко по пунктам + сравнение»):
-- youtrack[].issues[]: id, summary, state, assignee, components, period_events.
+- youtrack[].issues[]: id, summary, state, in_progress, assignee, components, period_events.
+- in_progress=true или state «В работе» — обязательно в блок §4 «В работе (YouTrack)».
 - calendar[].events[]: summary, start — встречи и синки.
 - email / employee_emails: subject, snippet — обсуждения и решения.
 - roadmap_table[]: initiative, status, quarter, due, owner — список инициатив для сопоставления.
+"""
+    elif is_milestone_report_format(fmt):
+        fields_hint = """
+Поля в JSON (формат milestone):
+- Сначала смотри блок ЭТАЛОН MILESTONES и MILESTONES_COUNT выше — это источник истины.
+- milestones[] дублирует эталон: code, title, description, deadline, deadline_label, days_until_deadline, overdue.
+- youtrack[].issues[]: id, summary, state, assignee, last_comment, period_events.comments_in_period.
+- calendar[].events[] и email / employee_emails (from, to, subject, snippet) — факты к критериям и к статусам партнёров.
+- Имена внешних сторон бери из писем, комментариев и критериев; не ограничивайся примерами из системного промпта.
+- roadmap_table не заменяет milestones.
 """
     else:
         fields_hint = """
@@ -503,13 +738,24 @@ def build_user_prompt(
             " Акцент на результатах и блоках работ; "
             "не перечисляй задачи списком — только обобщения и 1–2 ID как пример."
         )
+    elif fmt == REPORT_FORMAT_MILESTONE_GAMMA:
+        tail = (
+            " Для каждого milestone: дедлайн, статус, сторона, риск, шаги. "
+            "Отдельно — статусы партнёров. "
+            "После этого — раздел «План презентации для Gamma» с пометкой, что это рекомендация, не правило. "
+            "Письма и комментарии YouTrack — факты. Не пиши «не заданы», если MILESTONES_COUNT ≥ 1."
+        )
+    elif fmt == REPORT_FORMAT_MILESTONE_SYNC:
+        tail = (
+            " Для каждого milestone верни дедлайн, статус, сторону следующего действия, риск и следующие шаги. "
+            "Отдельным разделом верни статус по каждому найденному партнёру. "
+            "Письма и комментарии YouTrack — факты. Не пиши «не заданы», если MILESTONES_COUNT ≥ 1."
+        )
     else:
         tail = " Во всех списках — конкретные названия задач, встреч и писем."
 
     history_block = ""
     if previous_reports:
-        import json
-
         history_block = f"""
 История отчётов по проекту (для сравнения):
 ```json
@@ -517,10 +763,30 @@ def build_user_prompt(
 ```
 """
 
+    plan_hint = _roadmap_sources_hint(snapshot)
+    closing = (
+        "Сформируй отчёт по шаблону. Roadmap — для сверки с фактами недели, "
+        "не обязательный перечень планов."
+    )
+    if is_milestone_report_format(fmt):
+        plan_hint = _milestones_prompt_block(snapshot)
+        if fmt == REPORT_FORMAT_MILESTONE_GAMMA:
+            closing = (
+                "Сформируй отчёт по шаблону. Эталон — блок ЭТАЛОН MILESTONES. "
+                "Разделы 1–5 как в синхронизации с milestone; раздел 6 — план презы для Gamma "
+                "(рекомендация, не правило; мало текста; можно мини-картинки и диаграмму Ганта)."
+            )
+        else:
+            closing = (
+                "Сформируй отчёт по шаблону. Эталон — блок ЭТАЛОН MILESTONES. "
+                "У каждого milestone: дедлайн, статус, сторона следующего действия, риск, следующие шаги. "
+                "У каждого внешнего партнёра: роль, статус, что на их стороне, связанные milestones, риск."
+            )
+
     return f"""Проект: {project_name}
 Формат: {fmt_label}
 Текущий квартал для фильтра планов: {quarter}
-{_roadmap_sources_hint(snapshot)}
+{plan_hint}
 {fields_hint}
 {context_block}
 {history_block}
@@ -530,7 +796,7 @@ def build_user_prompt(
 {json.dumps(snapshot, ensure_ascii=False, indent=2)}
 ```
 
-Сформируй отчёт по шаблону. Roadmap — для сверки с фактами недели, не обязательный перечень планов.{tail}"""
+{closing}{tail}"""
 
 
 def build_portfolio_summary_user_prompt(project_reports: list[dict[str, Any]]) -> str:

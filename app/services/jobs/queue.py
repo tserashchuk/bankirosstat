@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from dataclasses import replace
 from typing import Any, Optional
 
 from arq import create_pool
@@ -16,7 +17,14 @@ settings = get_settings()
 
 def redis_settings() -> RedisSettings:
     """Конфигурация Redis для ARQ из REDIS_URL."""
-    return RedisSettings.from_dsn(settings.redis_url)
+    # Docker DNS на старте контейнера иногда отвечает EAI_AGAIN —
+    # без запаса ретраев app поднимается без очереди и так и остаётся.
+    return replace(
+        RedisSettings.from_dsn(settings.redis_url),
+        conn_timeout=2,
+        conn_retries=15,
+        conn_retry_delay=1,
+    )
 
 
 async def create_arq_pool() -> ArqRedis:

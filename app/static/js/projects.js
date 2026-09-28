@@ -363,6 +363,77 @@
   document.getElementById("roadmap-preview-close")?.addEventListener("click", closeRoadmapModal);
   document.getElementById("roadmap-preview-backdrop")?.addEventListener("click", closeRoadmapModal);
 
+  const milestoneRowTemplate = document.getElementById("milestone-row-template");
+
+  function bindMilestoneRow(row) {
+    row.querySelector(".btn-del-milestone")?.addEventListener("click", () => {
+      row.remove();
+    });
+  }
+
+  function collectMilestoneItems(form) {
+    const items = [];
+    form.querySelectorAll(".milestones-tbody tr").forEach((tr, idx) => {
+      const code = (tr.querySelector('[name="code"]')?.value || "").trim();
+      const title = (tr.querySelector('[name="title"]')?.value || "").trim();
+      const description = (tr.querySelector('[name="description"]')?.value || "").trim();
+      const deadline = (tr.querySelector('[name="deadline"]')?.value || "").trim();
+      if (!code && !title && !description && !deadline) return;
+      const item = { code, title, description, deadline, sort_order: idx };
+      if (tr.dataset.id) item.id = tr.dataset.id;
+      items.push(item);
+    });
+    return items;
+  }
+
+  function setMilestoneStatus(form, text, isError) {
+    const el = form.querySelector(".milestones-status");
+    if (!el) return;
+    el.textContent = text || "";
+    el.classList.toggle("hidden", !text);
+    el.classList.toggle("text-red-600", Boolean(isError));
+    el.classList.toggle("text-slate-500", !isError);
+  }
+
+  document.querySelectorAll(".form-milestones").forEach((form) => {
+    form.querySelectorAll(".milestones-tbody tr").forEach(bindMilestoneRow);
+    form.querySelector(".btn-add-milestone")?.addEventListener("click", () => {
+      const tbody = form.querySelector(".milestones-tbody");
+      if (!tbody || !milestoneRowTemplate) return;
+      const node = milestoneRowTemplate.content.firstElementChild.cloneNode(true);
+      const n = tbody.querySelectorAll("tr").length + 1;
+      const codeInput = node.querySelector('[name="code"]');
+      if (codeInput && !codeInput.value) codeInput.value = `M${n}`;
+      bindMilestoneRow(node);
+      tbody.appendChild(node);
+      codeInput?.focus();
+    });
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const projectId = form.dataset.projectId;
+      if (!projectId) return;
+      const btn = form.querySelector('button[type="submit"]');
+      if (btn) btn.disabled = true;
+      setMilestoneStatus(form, "Сохранение…", false);
+      try {
+        const res = await fetch(`/api/projects/${projectId}/milestones`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ items: collectMilestoneItems(form) }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          const detail = typeof data.detail === "string" ? data.detail : "Не удалось сохранить milestones";
+          setMilestoneStatus(form, detail, true);
+          return;
+        }
+        location.reload();
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    });
+  });
+
   document.querySelectorAll(".btn-delete-project").forEach((btn) => {
     btn.addEventListener("click", async () => {
       if (!confirm("Удалить проект и все источники?")) return;

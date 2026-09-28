@@ -23,7 +23,7 @@ _ACTIVITY_PAGE_FIELDS = (
 _ACTIVITY_FIELDS = (
     "id,timestamp,author(name,login),field(name),added(name),removed(name),target(text)"
 )
-_MAX_ISSUES_FOR_ACTIVITIES = 40
+_MAX_ISSUES_FOR_ACTIVITIES = 100
 _MAX_COMMENT_TEXT = 500
 
 _CLOSED_STATE_NAMES = frozenset(
@@ -252,6 +252,39 @@ def _summarize_period_events(
         "comments_in_period": comments_in_period[:15],
         "current_state": current_state,
     }
+
+
+def is_in_progress_state(state: str | None) -> bool:
+    """Текущий статус задачи — «в работе» / In Progress."""
+    s = (state or "").strip().lower()
+    if not s:
+        return False
+    if s in _IN_PROGRESS_STATE_NAMES:
+        return True
+    return any(name in s for name in _IN_PROGRESS_STATE_NAMES)
+
+
+def issue_has_period_activity(period_events: dict[str, Any] | None) -> bool:
+    """Есть ли у задачи события за отчётный период (не только поле updated)."""
+    if not period_events:
+        return False
+    if period_events.get("created_in_period") or period_events.get("started_in_period"):
+        return True
+    if period_events.get("closed_in_period"):
+        return True
+    if period_events.get("state_changes") or period_events.get("comments_in_period"):
+        return True
+    return False
+
+
+def issue_is_in_progress(issue: dict[str, Any]) -> bool:
+    """Задача сейчас в работе (по state или period_events.current_state)."""
+    if is_in_progress_state(issue.get("state")):
+        return True
+    pe = issue.get("period_events")
+    if isinstance(pe, dict) and is_in_progress_state(pe.get("current_state")):
+        return True
+    return bool(issue.get("in_progress"))
 
 
 def _parse_activities_response(
